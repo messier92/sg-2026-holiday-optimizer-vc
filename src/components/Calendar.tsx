@@ -73,7 +73,7 @@ export function Calendar() {
                         const daysInMonth = getDaysInMonth(year, monthIndex);
                         const firstDay = getFirstDayOfMonth(year, monthIndex);
                         const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-                        const paddingDays = Array.from({ length: firstDay }, (_, i) => null);
+                        const paddingDays = Array.from({ length: firstDay }, () => null);
 
                         return (
                             <div

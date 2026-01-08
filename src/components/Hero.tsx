@@ -1,4 +1,4 @@
-import { ArrowRight, Sun, Coffee, Briefcase, Plane } from 'lucide-react';
+import { Coffee, Briefcase, Plane } from 'lucide-react';
 
 export function Hero() {
     return (
