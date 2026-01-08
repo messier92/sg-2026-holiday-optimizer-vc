@@ -1,8 +1,18 @@
+import { useEffect } from "react";
 import { Header } from "./components/Header";
 import { Hero } from "./components/Hero";
 import { Calendar } from "./components/Calendar";
+import { client } from "./lib/appwrite";
 
 function App() {
+  useEffect(() => {
+    client.ping().then(response => {
+      console.log("Appwrite connection verified:", response);
+    }).catch(error => {
+      console.error("Appwrite connection failed:", error);
+    });
+  }, []);
+
   return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-indigo-500/30 selection:text-indigo-600">
       <Header />
