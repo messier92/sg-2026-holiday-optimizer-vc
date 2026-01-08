@@ -235,7 +235,7 @@ export function Calendar() {
                                         </div>
 
                                         <div className="text-[10px] text-center text-muted-foreground/50 mt-1">
-                                            (From {startDate} to Dec 31)
+                                            (From {startDate} to 2026-12-31)
                                         </div>
                                     </>
                                 );
