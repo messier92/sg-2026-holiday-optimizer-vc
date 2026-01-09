@@ -44,12 +44,42 @@ export function Calendar() {
     const [duration, setDuration] = useState(7);
     const [startDate, setStartDate] = useState('2026-01-01');
     const [PTO_DATES, setPTO_DATES] = useState<string[]>([]);
+    const [manualPTODates, setManualPTODates] = useState<Set<string>>(new Set());
     const [includeWeekends, setIncludeWeekends] = useState(true);
 
+    // Calculate remaining PTO count
+    const remainingPTO = duration - manualPTODates.size;
+
     React.useEffect(() => {
-        const suggestedDates = getMaximizePTO(startDate, duration, PUBLIC_HOLIDAYS_2026);
+        // Treat manual PTO dates as additional holidays
+        const manualHolidays = Array.from(manualPTODates).map(date => ({
+            date,
+            name: 'Manual PTO'
+        }));
+        const allHolidays = [...PUBLIC_HOLIDAYS_2026, ...manualHolidays];
+
+        const suggestedDates = getMaximizePTO(startDate, remainingPTO, allHolidays);
         setPTO_DATES(suggestedDates);
-    }, [startDate, duration]);
+    }, [startDate, duration, manualPTODates, remainingPTO]);
+
+    const handleDateClick = (dateStr: string, isPast: boolean, isWeekend: boolean, isHoliday: boolean) => {
+        // Don't allow clicking on past dates, weekends, or holidays
+        if (isPast || isWeekend || isHoliday) return;
+
+        setManualPTODates(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(dateStr)) {
+                // Remove if already selected (add back to PTO count)
+                newSet.delete(dateStr);
+            } else {
+                // Add if not selected (subtract from PTO count)
+                if (remainingPTO > 0) {
+                    newSet.add(dateStr);
+                }
+            }
+            return newSet;
+        });
+    };
 
     return (
         <section id="calendar" className="py-24 bg-background relative overflow-hidden">
@@ -64,7 +94,8 @@ export function Calendar() {
                     <div>
                         <span className="inline-block mx-1 w-3 h-3 rounded-full bg-red-500/80"></span> indicates a Public Holiday
                         <span className="inline-block mx-1 w-3 h-3 rounded-full bg-indigo-500/20"></span> indicates a Weekend
-                        <span className="inline-block mx-1 w-3 h-3 rounded-full bg-green-500/80"></span> indicates your PTO
+                        <span className="inline-block mx-1 w-3 h-3 rounded-full bg-purple-400/60"></span> indicates manually selected PTO
+                        <span className="inline-block mx-1 w-3 h-3 rounded-full bg-green-500/80"></span> indicates suggested PTO
                     </div>
                 </div>
 
@@ -99,6 +130,7 @@ export function Calendar() {
                                         const dateStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                                         const holiday = PUBLIC_HOLIDAYS_2026.find(h => h.date === dateStr);
                                         const isPTO = PTO_DATES.includes(dateStr);
+                                        const isManualPTO = manualPTODates.has(dateStr);
                                         const date = new Date(year, monthIndex, day);
                                         const isWeekend = date.getDay() === 0 || date.getDay() === 6;
 
@@ -107,25 +139,32 @@ export function Calendar() {
                                         startObj.setHours(0, 0, 0, 0);
                                         const isPast = date < startObj;
 
+                                        const canClick = !isPast && !isWeekend && !holiday;
+
                                         return (
                                             <div
                                                 key={`${day}-${index}`}
+                                                onClick={() => handleDateClick(dateStr, isPast, isWeekend, !!holiday)}
                                                 className={cn(
-                                                    "aspect-square flex items-center justify-center rounded-lg transition-colors relative group cursor-default",
+                                                    "aspect-square flex items-center justify-center rounded-lg transition-colors relative group",
                                                     isPast && "opacity-25 line-through cursor-not-allowed",
-                                                    !isPast && isWeekend && "bg-indigo-500/5 text-indigo-700 dark:text-indigo-300",
+                                                    !isPast && isWeekend && "bg-indigo-500/5 text-indigo-700 dark:text-indigo-300 cursor-default",
                                                     !isPast && holiday
-                                                        ? "bg-red-500 text-white font-bold shadow-md shadow-red-500/20"
-                                                        : !isPast && isPTO
-                                                            ? "bg-green-500 text-white font-bold shadow-md shadow-green-500/20"
-                                                            : !isPast && "hover:bg-neutral-100 dark:hover:bg-white/10"
+                                                        ? "bg-red-500 text-white font-bold shadow-md shadow-red-500/20 cursor-default"
+                                                        : !isPast && isManualPTO
+                                                            ? "bg-purple-400/60 text-white font-bold shadow-md shadow-purple-500/20 cursor-pointer"
+                                                            : !isPast && isPTO
+                                                                ? "bg-green-500 text-white font-bold shadow-md shadow-green-500/20 cursor-default"
+                                                                : canClick
+                                                                    ? "hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
+                                                                    : "cursor-default"
                                                 )}
-                                                title={holiday?.name ?? (isPTO ? 'PTO' : undefined)}
+                                                title={holiday?.name ?? (isManualPTO ? 'Manual PTO (click to remove)' : isPTO ? 'Suggested PTO' : canClick ? 'Click to select PTO' : undefined)}
                                             >
                                                 {day}
-                                                {(holiday || isPTO) && !isPast && (
+                                                {(holiday || isPTO || isManualPTO) && !isPast && (
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-gray-900 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-                                                        {holiday ? holiday.name : 'PTO'}
+                                                        {holiday ? holiday.name : isManualPTO ? 'Manual PTO' : 'Suggested PTO'}
                                                     </div>
                                                 )}
                                             </div>
@@ -157,12 +196,28 @@ export function Calendar() {
                             <div>
                                 <div className="flex items-center justify-between mb-2">
                                     <label htmlFor="duration-slider" className="text-sm font-semibold">
-                                        Min Duration
+                                        Total PTO Days
                                     </label>
                                     <span className="text-xl font-bold text-indigo-600 dark:text-indigo-400">
                                         {duration} days
                                     </span>
                                 </div>
+                                <div className="flex items-center justify-between mb-2 text-sm">
+                                    <span className="text-muted-foreground">Manual PTO:</span>
+                                    <span className="font-semibold text-purple-600 dark:text-purple-400">{manualPTODates.size} days</span>
+                                </div>
+                                <div className="flex items-center justify-between mb-2 text-sm">
+                                    <span className="text-muted-foreground">Available for suggestions:</span>
+                                    <span className="font-semibold text-green-600 dark:text-green-400">{remainingPTO} days</span>
+                                </div>
+                                {manualPTODates.size > 0 && (
+                                    <button
+                                        onClick={() => setManualPTODates(new Set())}
+                                        className="w-full mt-2 px-4 py-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-700 dark:text-purple-300 font-semibold text-sm transition-all duration-200 hover:shadow-md hover:shadow-purple-500/10"
+                                    >
+                                        Clear All Manual PTOs
+                                    </button>
+                                )}
                                 <input
                                     id="duration-slider"
                                     type="range"
@@ -195,6 +250,7 @@ export function Calendar() {
                                     const isWknd = daysIter.getDay() === 0 || daysIter.getDay() === 6;
                                     const isPH = PUBLIC_HOLIDAYS_2026.some(h => h.date === dStr);
                                     const isPTO = PTO_DATES.includes(dStr);
+                                    const isManual = manualPTODates.has(dStr);
 
                                     if (!includeWeekends && isWknd) {
                                         // Skip weekends entirely if unchecked
@@ -202,7 +258,7 @@ export function Calendar() {
                                         continue;
                                     }
 
-                                    if (isWknd || isPH || isPTO) {
+                                    if (isWknd || isPH || isPTO || isManual) {
                                         nonWorking++;
                                     } else {
                                         working++;

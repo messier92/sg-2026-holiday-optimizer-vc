@@ -211,26 +211,31 @@ export function getMaximizePTO(
                 }
             }
 
-            // D. Random Single Excess (P5)
+            // D. Single Excess - Target longest gap (P5)
             if (remainingPTOs < 5) {
-                const monT = monTime;
-                if (monT >= start.getTime() && !isHoliday(monT) && !selectedPTOs.has(toDateStr(monT))) {
-                    evaluateCandidate({
-                        dates: [toDateStr(monT)],
-                        priority: 5,
-                        restDaysGained: 3,
-                        breakRange: { start: monTime - 2 * ONE_DAY_MS, end: monT }
-                    });
-                }
+                // Only consider this week if it's in the longest gap between holidays
+                const longestGap = findLongestHolidayGap();
 
-                const friT = monTime + 4 * ONE_DAY_MS;
-                if (friT >= start.getTime() && !isHoliday(friT) && !selectedPTOs.has(toDateStr(friT))) {
-                    evaluateCandidate({
-                        dates: [toDateStr(friT)],
-                        priority: 5,
-                        restDaysGained: 3,
-                        breakRange: { start: friT, end: monTime + 6 * ONE_DAY_MS }
-                    });
+                if (longestGap && monTime >= longestGap.start && monTime <= longestGap.end) {
+                    const monT = monTime;
+                    if (monT >= start.getTime() && !isHoliday(monT) && !selectedPTOs.has(toDateStr(monT))) {
+                        evaluateCandidate({
+                            dates: [toDateStr(monT)],
+                            priority: 5,
+                            restDaysGained: 3,
+                            breakRange: { start: monTime - 2 * ONE_DAY_MS, end: monT }
+                        });
+                    }
+
+                    const friT = monTime + 4 * ONE_DAY_MS;
+                    if (friT >= start.getTime() && !isHoliday(friT) && !selectedPTOs.has(toDateStr(friT))) {
+                        evaluateCandidate({
+                            dates: [toDateStr(friT)],
+                            priority: 5,
+                            restDaysGained: 3,
+                            breakRange: { start: friT, end: monTime + 6 * ONE_DAY_MS }
+                        });
+                    }
                 }
             }
 
@@ -246,6 +251,44 @@ export function getMaximizePTO(
     }
 
     return Array.from(selectedPTOs).sort();
+
+    function findLongestHolidayGap(): { start: number; end: number } | null {
+        // Get all holidays that are after the start date
+        const sortedHolidays = Array.from(holidayTimes)
+            .filter(t => t >= start.getTime())
+            .sort((a, b) => a - b);
+
+        if (sortedHolidays.length === 0) {
+            // No holidays, the entire period is a gap
+            return { start: start.getTime(), end: endOfYear.getTime() };
+        }
+
+        let longestGap = {
+            start: start.getTime(),
+            end: sortedHolidays[0],
+            length: sortedHolidays[0] - start.getTime()
+        };
+
+        // Check gaps between consecutive holidays
+        for (let i = 0; i < sortedHolidays.length - 1; i++) {
+            const gapStart = sortedHolidays[i];
+            const gapEnd = sortedHolidays[i + 1];
+            const gapLength = gapEnd - gapStart;
+
+            if (gapLength > longestGap.length) {
+                longestGap = { start: gapStart, end: gapEnd, length: gapLength };
+            }
+        }
+
+        // Check the gap after the last holiday
+        const lastHoliday = sortedHolidays[sortedHolidays.length - 1];
+        const finalGapLength = endOfYear.getTime() - lastHoliday;
+        if (finalGapLength > longestGap.length) {
+            longestGap = { start: lastHoliday, end: endOfYear.getTime(), length: finalGapLength };
+        }
+
+        return { start: longestGap.start, end: longestGap.end };
+    }
 
     function hasConsecutiveHolidays(holidays: number[]) {
         if (holidays.length < 2) return false;
