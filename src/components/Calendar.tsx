@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { getMaximizePTO } from '@/lib/maxleavealgorithm';
@@ -43,6 +43,7 @@ export function Calendar() {
     const year = 2026;
     const [duration, setDuration] = useState(7);
     const [startDate, setStartDate] = useState('2026-01-01');
+    const [endDate, setEndDate] = useState('2026-12-31');
     const [PTO_DATES, setPTO_DATES] = useState<string[]>([]);
     const [manualPTODates, setManualPTODates] = useState<Set<string>>(new Set());
     const [includeWeekends, setIncludeWeekends] = useState(true);
@@ -50,7 +51,24 @@ export function Calendar() {
     // Calculate remaining PTO count
     const remainingPTO = duration - manualPTODates.size;
 
-    React.useEffect(() => {
+    // Clear manual PTO dates that are after the end date
+    useEffect(() => {
+        setManualPTODates(prev => {
+            const newSet = new Set(prev);
+            let hasChanges = false;
+
+            prev.forEach(dateStr => {
+                if (dateStr > endDate) {
+                    newSet.delete(dateStr);
+                    hasChanges = true;
+                }
+            });
+
+            return hasChanges ? newSet : prev;
+        });
+    }, [endDate]);
+
+    useEffect(() => {
         // Treat manual PTO dates as additional holidays
         const manualHolidays = Array.from(manualPTODates).map(date => ({
             date,
@@ -58,9 +76,9 @@ export function Calendar() {
         }));
         const allHolidays = [...PUBLIC_HOLIDAYS_2026, ...manualHolidays];
 
-        const suggestedDates = getMaximizePTO(startDate, remainingPTO, allHolidays);
+        const suggestedDates = getMaximizePTO(startDate, remainingPTO, allHolidays, endDate);
         setPTO_DATES(suggestedDates);
-    }, [startDate, duration, manualPTODates, remainingPTO]);
+    }, [startDate, endDate, duration, manualPTODates, remainingPTO]);
 
     const handleDateClick = (dateStr: string, isPast: boolean, isWeekend: boolean, isHoliday: boolean) => {
         // Don't allow clicking on past dates, weekends, or holidays
@@ -134,26 +152,29 @@ export function Calendar() {
                                         const date = new Date(year, monthIndex, day);
                                         const isWeekend = date.getDay() === 0 || date.getDay() === 6;
 
-                                        // Compare with start date (normalized to midnight)
+                                        // Compare with start and end dates (normalized to midnight)
                                         const startObj = new Date(startDate);
                                         startObj.setHours(0, 0, 0, 0);
+                                        const endObj = new Date(endDate);
+                                        endObj.setHours(0, 0, 0, 0);
                                         const isPast = date < startObj;
+                                        const isAfterEnd = date > endObj;
 
-                                        const canClick = !isPast && !isWeekend && !holiday;
+                                        const canClick = !isPast && !isAfterEnd && !isWeekend && !holiday;
 
                                         return (
                                             <div
                                                 key={`${day}-${index}`}
-                                                onClick={() => handleDateClick(dateStr, isPast, isWeekend, !!holiday)}
+                                                onClick={() => handleDateClick(dateStr, isPast || isAfterEnd, isWeekend, !!holiday)}
                                                 className={cn(
                                                     "aspect-square flex items-center justify-center rounded-lg transition-colors relative group",
-                                                    isPast && "opacity-25 line-through cursor-not-allowed",
-                                                    !isPast && isWeekend && "bg-indigo-500/5 text-indigo-700 dark:text-indigo-300 cursor-default",
-                                                    !isPast && holiday
+                                                    (isPast || isAfterEnd) && "opacity-25 line-through cursor-not-allowed",
+                                                    !isPast && !isAfterEnd && isWeekend && "bg-indigo-500/5 text-indigo-700 dark:text-indigo-300 cursor-default",
+                                                    !isPast && !isAfterEnd && holiday
                                                         ? "bg-red-500 text-white font-bold shadow-md shadow-red-500/20 cursor-default"
-                                                        : !isPast && isManualPTO
+                                                        : !isPast && !isAfterEnd && isManualPTO
                                                             ? "bg-purple-400/60 text-white font-bold shadow-md shadow-purple-500/20 cursor-pointer"
-                                                            : !isPast && isPTO
+                                                            : !isPast && !isAfterEnd && isPTO
                                                                 ? "bg-green-500 text-white font-bold shadow-md shadow-green-500/20 cursor-default"
                                                                 : canClick
                                                                     ? "hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
@@ -162,7 +183,7 @@ export function Calendar() {
                                                 title={holiday?.name ?? (isManualPTO ? 'Manual PTO (click to remove)' : isPTO ? 'Suggested PTO' : canClick ? 'Click to select PTO' : undefined)}
                                             >
                                                 {day}
-                                                {(holiday || isPTO || isManualPTO) && !isPast && (
+                                                {(holiday || isPTO || isManualPTO) && !isPast && !isAfterEnd && (
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-gray-900 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
                                                         {holiday ? holiday.name : isManualPTO ? 'Manual PTO' : 'Suggested PTO'}
                                                     </div>
@@ -179,19 +200,35 @@ export function Calendar() {
                 <div className="mt-16 max-w-4xl mx-auto p-6 rounded-2xl bg-white/50 dark:bg-white/5 border border-white/20 backdrop-blur-sm">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <div className="space-y-6">
-                            <div>
-                                <label htmlFor="start-date" className="block text-sm font-semibold mb-2">
-                                    Start Date
-                                </label>
-                                <input
-                                    id="start-date"
-                                    type="date"
-                                    value={startDate}
-                                    min="2026-01-01"
-                                    max="2026-12-31"
-                                    onChange={(e) => setStartDate(e.target.value)}
-                                    className="w-full px-4 py-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="start-date" className="block text-sm font-semibold mb-2">
+                                        Start Date
+                                    </label>
+                                    <input
+                                        id="start-date"
+                                        type="date"
+                                        value={startDate}
+                                        min="2026-01-01"
+                                        max={endDate}
+                                        onChange={(e) => setStartDate(e.target.value)}
+                                        className="w-full px-4 py-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="end-date" className="block text-sm font-semibold mb-2">
+                                        End Date
+                                    </label>
+                                    <input
+                                        id="end-date"
+                                        type="date"
+                                        value={endDate}
+                                        min={startDate}
+                                        max="2026-12-31"
+                                        onChange={(e) => setEndDate(e.target.value)}
+                                        className="w-full px-4 py-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                </div>
                             </div>
                             <div>
                                 <div className="flex items-center justify-between mb-2">
@@ -239,7 +276,8 @@ export function Calendar() {
                                 // Calculate Stats on the fly
                                 const start = new Date(startDate);
                                 start.setHours(0, 0, 0, 0);
-                                const end = new Date(2026, 11, 31);
+                                const end = new Date(endDate);
+                                end.setHours(0, 0, 0, 0);
 
                                 let working = 0;
                                 let nonWorking = 0;
@@ -291,7 +329,7 @@ export function Calendar() {
                                         </div>
 
                                         <div className="text-[10px] text-center text-muted-foreground/50 mt-1">
-                                            (From {startDate} to 2026-12-31)
+                                            (From {startDate} to {endDate})
                                         </div>
                                     </>
                                 );
