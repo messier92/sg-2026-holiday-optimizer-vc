@@ -5,6 +5,7 @@ import { defineConfig } from "vite"
  
 // https://vite.dev/config/
 export default defineConfig({
+  base: "/sg-2026-holiday-optimizer-vc/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
