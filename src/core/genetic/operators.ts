@@ -133,16 +133,26 @@ export function repairChromosomeGenes(
         }
     }
 
-    // 5. If count < minPTORequired, try to extend existing clusters or add well-spaced clusters
-    if (count < ctx.minPTORequired) {
+    // 5. Fill PTO up to target budget (or minPTORequired) using cluster extension & multi-day packing
+    // so that 14-working-day spacing never deadlocks the chromosome at ~6 isolated 1-day breaks.
+    const targetFillPTO = !rules.allocation.allowUnusedPTO
+        ? ctx.availablePTO
+        : rules.objectives.primary === 'minimize_pto_consumption'
+          ? ctx.minPTORequired
+          : ctx.availablePTO;
+
+    if (count < targetFillPTO) {
         const canAddAt = (pos: number): boolean => {
+            if (pos < 0 || pos >= M) return false;
             if (genes[pos] === 1 || ctx.allowedMask[pos] === 0) return false;
             genes[pos] = 1;
 
             // Check consecutive limit
             if (maxConsec !== null) {
                 let r = 0;
-                for (let k = Math.max(0, pos - maxConsec - 1); k <= Math.min(M - 1, pos + maxConsec + 1); k++) {
+                const lo = Math.max(0, pos - maxConsec - 1);
+                const hi = Math.min(M - 1, pos + maxConsec + 1);
+                for (let k = lo; k <= hi; k++) {
                     if (genes[k] === 1) {
                         r++;
                         if (r > maxConsec) {
@@ -184,15 +194,103 @@ export function repairChromosomeGenes(
             return true;
         };
 
-        // First try extending existing clusters or placing at bridge priority indices
-        const order = [...ctx.bridgePriorityIndices];
-        for (let k = 0; k < M; k++) order.push(k);
+        const extendExistingClusters = (target: number) => {
+            let extended = true;
+            while (extended && count < target) {
+                extended = false;
+                let idx = 0;
+                while (idx < M && count < target) {
+                    if (genes[idx] === 0) {
+                        idx++;
+                        continue;
+                    }
+                    const a = idx;
+                    while (idx < M && genes[idx] === 1) idx++;
+                    const b = idx - 1;
 
-        for (const pos of order) {
-            if (count >= ctx.minPTORequired) break;
-            if (canAddAt(pos)) {
-                count++;
+                    if (b + 1 < M && count < target && canAddAt(b + 1)) {
+                        count++;
+                        extended = true;
+                    }
+                    if (a - 1 >= 0 && count < target && canAddAt(a - 1)) {
+                        count++;
+                        extended = true;
+                    }
+                }
             }
+        };
+
+        const addAndGrowClusters = (order: number[], target: number, maxClusterSize: number) => {
+            for (const pos of order) {
+                if (count >= target) break;
+                if (canAddAt(pos)) {
+                    count++;
+                    let addedInCluster = 1;
+                    // Immediately grow this new cluster forward and backward so a single break
+                    // can absorb multiple PTO days without consuming extra break-spacing slots
+                    for (
+                        let f = pos + 1;
+                        f < M && count < target && addedInCluster < maxClusterSize;
+                        f++
+                    ) {
+                        if (canAddAt(f)) {
+                            count++;
+                            addedInCluster++;
+                        } else {
+                            break;
+                        }
+                    }
+                    for (
+                        let b = pos - 1;
+                        b >= 0 && count < target && addedInCluster < maxClusterSize;
+                        b--
+                    ) {
+                        if (canAddAt(b)) {
+                            count++;
+                            addedInCluster++;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+
+        // Build a candidate order that prioritizes holiday/weekend bridges first, then rotated working days
+        const offset = Math.floor(rng() * M);
+        const order: number[] = [...ctx.bridgePriorityIndices];
+        for (let k = 0; k < M; k++) {
+            order.push((k + offset) % M);
+        }
+
+        const preferredClusterCap = Math.min(maxConsec ?? 5, 5);
+
+        // Phase A: Extend existing clusters first (avoids creating new spacing locks)
+        extendExistingClusters(targetFillPTO);
+
+        // Phase B: Add new multi-day clusters in valid gaps and extend
+        if (count < targetFillPTO) {
+            addAndGrowClusters(order, targetFillPTO, preferredClusterCap);
+            extendExistingClusters(targetFillPTO);
+        }
+
+        // Phase C: If still below targetFillPTO (e.g., scattered 1-day breaks deadlocked spacing),
+        // consolidate by rebuilding non-required genes as multi-day clusters
+        if (count < targetFillPTO) {
+            for (let k = 0; k < M; k++) {
+                if (ctx.requiredMask[k] === 0) {
+                    genes[k] = 0;
+                }
+            }
+            count = 0;
+            for (let k = 0; k < M; k++) {
+                if (genes[k] === 1) count++;
+            }
+
+            const rebuildCap = Math.min(maxConsec ?? 10, Math.max(5, Math.ceil(targetFillPTO / 2)));
+            extendExistingClusters(targetFillPTO);
+            addAndGrowClusters(order, targetFillPTO, rebuildCap);
+            extendExistingClusters(targetFillPTO);
         }
     }
 

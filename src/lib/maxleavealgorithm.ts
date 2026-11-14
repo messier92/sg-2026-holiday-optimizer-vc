@@ -15,7 +15,8 @@ export function getMaximizePTO(
     startDate: string,
     ptoCount: number,
     publicHolidays: PublicHoliday[],
-    endDate?: string
+    endDate?: string,
+    excludedDates?: ReadonlySet<string>
 ): string[] {
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
@@ -44,6 +45,7 @@ export function getMaximizePTO(
         holidayTimes.add(t);
     }
     const isHoliday = (t: number) => holidayTimes.has(t);
+    const isExcluded = (dStr: string) => (excludedDates ? excludedDates.has(dStr) : false);
 
     const selectedPTOs = new Set<string>();
     let remainingPTOs = ptoCount;
@@ -57,8 +59,8 @@ export function getMaximizePTO(
     for (const d of FIXED_DATES) {
         if (remainingPTOs > 0) {
             const t = new Date(d).setHours(0, 0, 0, 0);
-            // Skip if before start date or after end date
-            if (t >= start.getTime() && t <= endOfYear.getTime()) {
+            // Skip if before start date, after end date, or excluded by restrictions
+            if (t >= start.getTime() && t <= endOfYear.getTime() && !isExcluded(d) && !isHoliday(t)) {
                 if (!selectedPTOs.has(d)) {
                     selectedPTOs.add(d);
                     remainingPTOs--;
@@ -140,8 +142,9 @@ export function getMaximizePTO(
             const fillDates: string[] = [];
             for (let i = 0; i < 5; i++) {
                 const t = monTime + i * ONE_DAY_MS;
-                if (t >= start.getTime() && t <= endOfYear.getTime() && !isHoliday(t) && !selectedPTOs.has(toDateStr(t))) {
-                    fillDates.push(toDateStr(t));
+                const dStr = toDateStr(t);
+                if (t >= start.getTime() && t <= endOfYear.getTime() && !isHoliday(t) && !isExcluded(dStr) && !selectedPTOs.has(dStr)) {
+                    fillDates.push(dStr);
                 }
             }
 
@@ -155,6 +158,14 @@ export function getMaximizePTO(
                     restDaysGained: 9,
                     breakRange: { start: monTime - 2 * ONE_DAY_MS, end: monTime + 6 * ONE_DAY_MS }
                 });
+            } else if (fillDates.length > remainingPTOs && remainingPTOs > 0) {
+                const partialDates = fillDates.slice(0, remainingPTOs);
+                evaluateCandidate({
+                    dates: partialDates,
+                    priority: 5,
+                    restDaysGained: partialDates.length + 2,
+                    breakRange: { start: monTime - 2 * ONE_DAY_MS, end: monTime + (partialDates.length - 1) * ONE_DAY_MS }
+                });
             }
 
             // B. Bridge (P2)
@@ -162,9 +173,10 @@ export function getMaximizePTO(
             const tueTime = monTime + 1 * ONE_DAY_MS;
             if (isHoliday(tueTime)) {
                 const monT = monTime;
-                if (monT >= start.getTime() && monT <= endOfYear.getTime() && !isHoliday(monT) && !selectedPTOs.has(toDateStr(monT))) {
+                const monStr = toDateStr(monT);
+                if (monT >= start.getTime() && monT <= endOfYear.getTime() && !isHoliday(monT) && !isExcluded(monStr) && !selectedPTOs.has(monStr)) {
                     evaluateCandidate({
-                        dates: [toDateStr(monT)],
+                        dates: [monStr],
                         priority: 2,
                         restDaysGained: 4,
                         breakRange: { start: monTime - 2 * ONE_DAY_MS, end: tueTime }
@@ -175,9 +187,10 @@ export function getMaximizePTO(
             const thuTime = monTime + 3 * ONE_DAY_MS;
             if (isHoliday(thuTime)) {
                 const friT = monTime + 4 * ONE_DAY_MS;
-                if (friT >= start.getTime() && friT <= endOfYear.getTime() && !isHoliday(friT) && !selectedPTOs.has(toDateStr(friT))) {
+                const friStr = toDateStr(friT);
+                if (friT >= start.getTime() && friT <= endOfYear.getTime() && !isHoliday(friT) && !isExcluded(friStr) && !selectedPTOs.has(friStr)) {
                     evaluateCandidate({
-                        dates: [toDateStr(friT)],
+                        dates: [friStr],
                         priority: 2,
                         restDaysGained: 4,
                         breakRange: { start: thuTime, end: monTime + 6 * ONE_DAY_MS }
@@ -191,11 +204,12 @@ export function getMaximizePTO(
                 const next = hTime + ONE_DAY_MS;
 
                 // Prev
-                if (prev >= start.getTime() && prev <= endOfYear.getTime() && !isHoliday(prev) && !selectedPTOs.has(toDateStr(prev))) {
+                const prevStr = toDateStr(prev);
+                if (prev >= start.getTime() && prev <= endOfYear.getTime() && !isHoliday(prev) && !isExcluded(prevStr) && !selectedPTOs.has(prevStr)) {
                     const d = new Date(prev).getDay();
                     if (d !== 0 && d !== 6) {
                         evaluateCandidate({
-                            dates: [toDateStr(prev)],
+                            dates: [prevStr],
                             priority: 4,
                             restDaysGained: 2,
                             breakRange: { start: prev, end: hTime }
@@ -204,11 +218,12 @@ export function getMaximizePTO(
                 }
 
                 // Next
-                if (next >= start.getTime() && next <= endOfYear.getTime() && !isHoliday(next) && !selectedPTOs.has(toDateStr(next))) {
+                const nextStr = toDateStr(next);
+                if (next >= start.getTime() && next <= endOfYear.getTime() && !isHoliday(next) && !isExcluded(nextStr) && !selectedPTOs.has(nextStr)) {
                     const d = new Date(next).getDay();
                     if (d !== 0 && d !== 6) {
                         evaluateCandidate({
-                            dates: [toDateStr(next)],
+                            dates: [nextStr],
                             priority: 4,
                             restDaysGained: 2,
                             breakRange: { start: hTime, end: next }
@@ -224,9 +239,10 @@ export function getMaximizePTO(
 
                 if (longestGap && monTime >= longestGap.start && monTime <= longestGap.end) {
                     const monT = monTime;
-                    if (monT >= start.getTime() && monT <= endOfYear.getTime() && !isHoliday(monT) && !selectedPTOs.has(toDateStr(monT))) {
+                    const monStr = toDateStr(monT);
+                    if (monT >= start.getTime() && monT <= endOfYear.getTime() && !isHoliday(monT) && !isExcluded(monStr) && !selectedPTOs.has(monStr)) {
                         evaluateCandidate({
-                            dates: [toDateStr(monT)],
+                            dates: [monStr],
                             priority: 5,
                             restDaysGained: 3,
                             breakRange: { start: monTime - 2 * ONE_DAY_MS, end: monT }
@@ -234,9 +250,10 @@ export function getMaximizePTO(
                     }
 
                     const friT = monTime + 4 * ONE_DAY_MS;
-                    if (friT >= start.getTime() && friT <= endOfYear.getTime() && !isHoliday(friT) && !selectedPTOs.has(toDateStr(friT))) {
+                    const friStr = toDateStr(friT);
+                    if (friT >= start.getTime() && friT <= endOfYear.getTime() && !isHoliday(friT) && !isExcluded(friStr) && !selectedPTOs.has(friStr)) {
                         evaluateCandidate({
-                            dates: [toDateStr(friT)],
+                            dates: [friStr],
                             priority: 5,
                             restDaysGained: 3,
                             breakRange: { start: friT, end: monTime + 6 * ONE_DAY_MS }

@@ -339,7 +339,7 @@ export const ALGORITHM_METADATA: Record<
 export function createDefaultRules(): SharedOptimizationRules {
     return {
         allocation: {
-            allowUnusedPTO: true,
+            allowUnusedPTO: false,
             minPTOToAllocate: 0,
             reservePTODays: 0,
             maxConsecutivePTOWorkingDays: null,

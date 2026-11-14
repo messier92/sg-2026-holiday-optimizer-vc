@@ -31,7 +31,7 @@ export type AppRoute =
     | '/algorithms/genetic'
     | '/algorithms/compare';
 
-const STORAGE_KEY = 'sg_ph_optimizer_2027_state_v1';
+const STORAGE_KEY = 'sg_ph_optimizer_2027_state_v2';
 
 interface PersistedState {
     startDate: string;
@@ -367,17 +367,6 @@ export function OptimizationProvider({ children }: { children: ReactNode }) {
         );
     }, [isResultStale]);
 
-    // If activeCalendarSource points to an algorithm whose result became stale, revert activeCalendarSource to 'legacy'
-    // so outdated algorithm results are never silently displayed on the main calendar!
-    useEffect(() => {
-        if (activeCalendarSource !== 'legacy') {
-            const res = results[activeCalendarSource];
-            if (!res || res.configSignature !== currentConfigSignature) {
-                setActiveCalendarSource('legacy');
-            }
-        }
-    }, [activeCalendarSource, results, currentConfigSignature]);
-
     const isRunning = useMemo(
         () => Object.values(runningAlgorithms).some(Boolean),
         [runningAlgorithms]
@@ -453,6 +442,28 @@ export function OptimizationProvider({ children }: { children: ReactNode }) {
         },
         [sharedInput, algorithmConfigs]
     );
+
+    // Keep the active algorithm visualization synchronized when shared inputs (slider, dates, or prohibited ranges) change
+    useEffect(() => {
+        if (activeCalendarSource === 'legacy') return;
+        if (!selectedAlgorithms[activeCalendarSource]) {
+            setActiveCalendarSource('legacy');
+            return;
+        }
+        const res = results[activeCalendarSource];
+        if (!res || res.configSignature !== currentConfigSignature) {
+            const timer = window.setTimeout(() => {
+                void runSingleAlgorithm(activeCalendarSource);
+            }, 150);
+            return () => window.clearTimeout(timer);
+        }
+    }, [
+        activeCalendarSource,
+        selectedAlgorithms,
+        results,
+        currentConfigSignature,
+        runSingleAlgorithm
+    ]);
 
     const runSelectedAlgorithms = useCallback(async (): Promise<void> => {
         if (selectedAlgorithmIds.length === 0) return;

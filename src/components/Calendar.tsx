@@ -282,15 +282,27 @@ export function Calendar() {
 
     const remainingPTO = Math.max(0, duration - manualPTODates.size);
 
-    // Existing legacy PTO suggestions
+    // Existing legacy PTO suggestions (respecting blackout dates and prohibited date ranges)
     const legacyPTODates = useMemo(() => {
         const manualHolidays = Array.from(manualPTODates).map(date => ({
             date,
             name: 'Manual PTO'
         }));
         const allHolidays = [...PUBLIC_HOLIDAYS_2027, ...manualHolidays];
-        return getMaximizePTO(startDate, remainingPTO, allHolidays, endDate);
-    }, [startDate, endDate, remainingPTO, manualPTODates]);
+        const calDays = buildCalendarDays(
+            startDate,
+            endDate,
+            PUBLIC_HOLIDAYS_2027,
+            rules.restrictions
+        );
+        const excludedDates = new Set<string>();
+        for (const d of calDays) {
+            if (d.isBlackout) {
+                excludedDates.add(d.date);
+            }
+        }
+        return getMaximizePTO(startDate, remainingPTO, allHolidays, endDate, excludedDates);
+    }, [startDate, endDate, remainingPTO, manualPTODates, rules.restrictions]);
 
     // Determine which PTO dates and continuous break dates to render on the main calendar
     const activeAlgoResult =

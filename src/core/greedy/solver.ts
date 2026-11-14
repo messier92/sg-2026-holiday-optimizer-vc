@@ -142,6 +142,38 @@ export async function solveWithGreedy(options: SolverOptions<GreedyConfig>): Pro
         await new Promise(resolve => setTimeout(resolve, 0));
     }
 
+    // If scattered 1-day picks deadlocked break spacing before reaching minPTORequired,
+    // run a cluster-first consolidation pass that prefers multi-day breaks so the full PTO budget can be allocated.
+    if (selectedSet.size < minPTORequired && !signal?.aborted) {
+        const consolidatedSet = new Set<string>(upfront.requiredEligibleDates);
+        while (consolidatedSet.size < availablePTO && !signal?.aborted) {
+            step++;
+            const remainingPTO = availablePTO - consolidatedSet.size;
+            const candidates = generateAndEvaluateGreedyCandidates(
+                calendarDays,
+                consolidatedSet,
+                remainingPTO,
+                input,
+                availablePTO
+            );
+            totalCandidatesEvaluated += candidates.length;
+            if (candidates.length === 0) break;
+
+            // Prefer multi-day clusters first when remaining budget > 1 so spacing slots are not exhausted
+            const multiDay = candidates.filter(c => c.ptoAdded >= Math.min(remainingPTO, 3));
+            const pool = multiDay.length > 0 ? multiDay : candidates;
+            const ranked = rankGreedyCandidates(pool, 'max_additional_days_off', false);
+            for (const d of ranked[0].dates) {
+                consolidatedSet.add(d);
+            }
+        }
+
+        if (consolidatedSet.size > selectedSet.size) {
+            selectedSet.clear();
+            for (const d of consolidatedSet) selectedSet.add(d);
+        }
+    }
+
     const finalDates = Array.from(selectedSet).sort();
     const isValid = isAllocationHardValid(calendarDays, finalDates, input);
     const elapsed = performance.now() - startTime;

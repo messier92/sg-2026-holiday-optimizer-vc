@@ -237,6 +237,7 @@ test('6. All dates marked as blackout dates', async () => {
 
     // Case 6a: Unused PTO allowed -> valid 0 PTO allocation
     const rulesAllowed = createDefaultRules();
+    rulesAllowed.allocation.allowUnusedPTO = true;
     rulesAllowed.restrictions.blackoutDates = allWorkingDates;
     const inputAllowed: SharedOptimizationInput = {
         startDate: '2027-06-01',
@@ -534,4 +535,48 @@ test('18. Full-year Singapore 2027 integration across all 5 algorithms & legacy 
         assert.equal(results[id].validation.isValid, true);
         assert.ok(results[id].totalCalendarDaysOff >= 18);
     }
+});
+
+test('19. 15 PTO days with prohibited date range overlapping suggested PTO dates and allowUnusedPTO unchecked by default', async () => {
+    const rules = createDefaultRules();
+    assert.equal(rules.allocation.allowUnusedPTO, false);
+
+    // Prohibit May 18-21 and March 8-12 (which overlap with prime holiday bridges)
+    rules.restrictions.prohibitedDateRanges = [
+        { id: 'p1', startDate: '2027-05-18', endDate: '2027-05-21', label: 'May block' },
+        { id: 'p2', startDate: '2027-03-08', endDate: '2027-03-12', label: 'March block' }
+    ];
+
+    const input: SharedOptimizationInput = {
+        startDate: '2027-01-01',
+        endDate: '2027-12-31',
+        ptoAllowance: 15,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules
+    };
+
+    const results = await runAllFive(input);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(results[id], input);
+        assert.equal(results[id].validation.isValid, true);
+        assert.equal(
+            results[id].totalPTOConsumed,
+            15,
+            `${id}: expected 15 PTO days consumed, got ${results[id].totalPTOConsumed}`
+        );
+        assert.equal(results[id].selectedPTODates.length, 15);
+        for (const d of results[id].selectedPTODates) {
+            assert.ok(
+                !(d >= '2027-05-18' && d <= '2027-05-21') &&
+                    !(d >= '2027-03-08' && d <= '2027-03-12'),
+                `${id}: allocated prohibited date ${d}`
+            );
+        }
+    }
+
+    // Also verify legacy getMaximizePTO with excluded dates
+    const calDays = buildCalendarDays('2027-01-01', '2027-12-31', PUBLIC_HOLIDAYS_2027, rules.restrictions);
+    const excluded = new Set(calDays.filter(d => d.isBlackout).map(d => d.date));
+    const legacy15 = getMaximizePTO('2027-01-01', 15, PUBLIC_HOLIDAYS_2027, '2027-12-31', excluded);
+    assert.equal(legacy15.length, 15);
 });
