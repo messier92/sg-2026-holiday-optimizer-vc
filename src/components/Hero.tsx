@@ -17,12 +17,12 @@ export function Hero() {
                     <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-balance mb-8 bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/60 drop-shadow-sm animate-in fade-in slide-in-from-bottom-8 duration-1000 fill-mode-both delay-100">
                         Singapore <br />
                         Public Holiday <br />
-                        <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500">2026 Optimizer</span>
+                        <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500">2027 Optimizer</span>
                     </h1>
 
                     <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto leading-relaxed animate-in fade-in slide-in-from-bottom-8 duration-1000 fill-mode-both delay-200">
                         Maximize your leave days with our intelligent long-weekend planner.
-                        We analyze the 2026 Singapore public holiday calendar to help you get
+                        We analyze the 2027 Singapore public holiday calendar to help you get
                         <span className="font-semibold text-foreground"> more breaks with fewer leave days</span>.
                     </p>
                 </div>

@@ -31,3 +31,24 @@ A concave function (e.g. square root, log) diminishes the marginal value of stac
 If the user has explicit preferences ("I want at least one trip in each of Q1, Q2, Q3, Q4"), that's straightforward to encode as hard constraints in an ILP/CP model rather than trying to coax it out of a single objective function.
 
 For a real product feature, #1 combined with #3 is usually the sweet spot — cap per-gap PTO spend, and use a concave reward function so the algorithm still finds efficient gaps but doesn't over-invest in any single one.
+
+TODO:
+1. Implement custom rules such as:
+a. Allow users to select entire months that should be considered a priority for PTOs
+b. Specify the max number of long breaks (more than 7 days) and adjust accordingly 
+c. Blackout dates — days/weeks the user cannot take off (e.g. a known busy sprint, exam period, or on-call rotation). Hard-exclude these from the gap search entirely.
+d. Anchor dates - "I already have a wedding on June 14th, build PTO around it" - treat a fixed date as a pinned holiday-equivalent and optimize gaps around it.
+Trip shape constraints
+e. Min/max trip length distribution — e.g. "give me at least 2 trips of 4–6 days and 1 trip of 10+ days" rather than just capping long breaks.
+f. Trip count target — "I want exactly 5 separate trips this year" as a hard constraint, which changes the knapsack into a cardinality-constrained variant.
+g. Minimum gap between trips — prevent two trips landing back-to-back (e.g., require at least 2 weeks between the end of one bridge and the start of the next), useful for people who don't want back-to-back time away from work.
+Multi-person / team constraints
+
+Output & UX features
+a. Multiple scenario comparison — generate 2–3 alternative optimized calendars (e.g. "max total days off" vs "max long trips" vs "evenly spread") and let the user pick, rather than a single answer.
+b. What-if slider — expose alpha and max_pto_per_gap as UI sliders so users see the trade-off live (more days off vs. more spread) without needing to understand the math.
+c. Efficiency score per gap — show "this trip costs 2 PTO days for 9 days off (4.5x ratio)" next to each suggested block, so users understand why a date range was picked.
+d. Carry-over / expiry handling — many companies let unused PTO carry over with a cap or expire by a certain date; factor in "these 3 days expire March 31" as an earlier-in-year weighting.
+Singapore-specific touches (given your repo name)
+e. SG public holiday-in-lieu logic — Singapore observes a "holiday falls on Sunday → next working day off" rule; make sure your calendar generator handles that correctly, since it directly affects gap detection.
+f. School holiday overlay — for users with kids, overlay MOE school holiday periods so the optimizer can prefer or avoid aligning PTO with them (some people want the opposite of what school holidays offer, since travel is pricier then).

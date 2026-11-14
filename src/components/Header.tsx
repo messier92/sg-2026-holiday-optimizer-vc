@@ -9,7 +9,7 @@ export function Header() {
                         <Sparkles size={20} />
                     </div>
                     <span className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-indigo-400 dark:to-purple-400">
-                        SG Holiday Optimizer 2026
+                        SG Holiday Optimizer 2027
                     </span>
                 </div>
             </div>

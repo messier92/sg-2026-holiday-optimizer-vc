@@ -24,7 +24,7 @@ function App() {
       {/* Simple Footer */}
       <footer className="border-t border-white/10 py-12 bg-background">
         <div className="container mx-auto px-6 text-center text-sm text-muted-foreground">
-          <p>© 2026 SG Holiday Optimizer. Vibe-coded by Goh Han Long, Eugene.</p>
+          <p>© 2027 SG Holiday Optimizer. Vibe-coded by Goh Han Long, Eugene.</p>
         </div>
       </footer>
     </div>

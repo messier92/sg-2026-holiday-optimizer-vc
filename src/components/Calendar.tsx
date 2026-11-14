@@ -7,21 +7,19 @@ function cn(...inputs: (string | undefined | null | false)[]) {
     return twMerge(clsx(inputs));
 }
 
-const PUBLIC_HOLIDAYS_2026 = [
-    { date: '2026-01-01', name: "New Year's Day" },
-    { date: '2026-02-17', name: "Chinese New Year" },
-    { date: '2026-02-18', name: "Chinese New Year" },
-    { date: '2026-03-21', name: "Hari Raya Puasa" },
-    { date: '2026-04-03', name: "Good Friday" },
-    { date: '2026-05-01', name: "Labour Day" },
-    { date: '2026-05-27', name: "Hari Raya Haji" },
-    { date: '2026-05-31', name: "Vesak Day" },
-    { date: '2026-06-01', name: "Vesak Day (Observed)" }, // Monday off
-    { date: '2026-08-09', name: "National Day" },
-    { date: '2026-08-10', name: "National Day (Observed)" }, // Monday off
-    { date: '2026-11-08', name: "Deepavali" },
-    { date: '2026-11-09', name: "Deepavali (Observed)" }, // Monday off
-    { date: '2026-12-25', name: "Christmas Day" },
+const PUBLIC_HOLIDAYS_2027 = [
+    { date: '2027-01-01', name: "New Year's Day" },
+    { date: '2027-02-06', name: "Chinese New Year (Day 1)" },
+    { date: '2027-02-07', name: "Chinese New Year (Day 2)" },
+    { date: '2027-02-08', name: "Chinese New Year Holiday off-in-lieu" },
+    { date: '2027-03-10', name: "Hari Raya Puasa" },
+    { date: '2027-03-26', name: "Good Friday" },
+    { date: '2027-05-01', name: "Labour Day" },
+    { date: '2027-05-17', name: "Hari Raya Haji" },
+    { date: '2027-05-20', name: "Vesak Day" },
+    { date: '2027-08-09', name: "National Day" },
+    { date: '2027-10-28', name: "Deepavali" },
+    { date: '2027-12-25', name: "Christmas" },
 ];
 
 const MONTHS = [
@@ -40,10 +38,10 @@ function getFirstDayOfMonth(year: number, month: number) {
 }
 
 export function Calendar() {
-    const year = 2026;
+    const year = 2027;
     const [duration, setDuration] = useState(7);
-    const [startDate, setStartDate] = useState('2026-01-01');
-    const [endDate, setEndDate] = useState('2026-12-31');
+    const [startDate, setStartDate] = useState('2027-01-01');
+    const [endDate, setEndDate] = useState('2027-12-31');
     const [PTO_DATES, setPTO_DATES] = useState<string[]>([]);
     const [manualPTODates, setManualPTODates] = useState<Set<string>>(new Set());
     const [includeWeekends, setIncludeWeekends] = useState(true);
@@ -74,7 +72,7 @@ export function Calendar() {
             date,
             name: 'Manual PTO'
         }));
-        const allHolidays = [...PUBLIC_HOLIDAYS_2026, ...manualHolidays];
+        const allHolidays = [...PUBLIC_HOLIDAYS_2027, ...manualHolidays];
 
         const suggestedDates = getMaximizePTO(startDate, remainingPTO, allHolidays, endDate);
         setPTO_DATES(suggestedDates);
@@ -104,7 +102,7 @@ export function Calendar() {
             <div className="container mx-auto px-6 relative z-10">
                 <div className="text-center mb-16">
                     <h2 className="text-3xl md:text-5xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 to-purple-500">
-                        2026 Calendar
+                        2027 Calendar
                     </h2>
                     <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
                         Plan your holidays around these official dates.
@@ -146,7 +144,7 @@ export function Calendar() {
 
                                     {days.map((day, index) => {
                                         const dateStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                        const holiday = PUBLIC_HOLIDAYS_2026.find(h => h.date === dateStr);
+                                        const holiday = PUBLIC_HOLIDAYS_2027.find(h => h.date === dateStr);
                                         const isPTO = PTO_DATES.includes(dateStr);
                                         const isManualPTO = manualPTODates.has(dateStr);
                                         const date = new Date(year, monthIndex, day);
@@ -209,7 +207,7 @@ export function Calendar() {
                                         id="start-date"
                                         type="date"
                                         value={startDate}
-                                        min="2026-01-01"
+                                        min="2027-01-01"
                                         max={endDate}
                                         onChange={(e) => setStartDate(e.target.value)}
                                         className="w-full px-4 py-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -224,7 +222,7 @@ export function Calendar() {
                                         type="date"
                                         value={endDate}
                                         min={startDate}
-                                        max="2026-12-31"
+                                        max="2027-12-31"
                                         onChange={(e) => setEndDate(e.target.value)}
                                         className="w-full px-4 py-2 rounded-lg bg-white/50 dark:bg-black/20 border border-white/20 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                     />
@@ -286,7 +284,7 @@ export function Calendar() {
                                 while (daysIter <= end) {
                                     const dStr = daysIter.toISOString().split('T')[0];
                                     const isWknd = daysIter.getDay() === 0 || daysIter.getDay() === 6;
-                                    const isPH = PUBLIC_HOLIDAYS_2026.some(h => h.date === dStr);
+                                    const isPH = PUBLIC_HOLIDAYS_2027.some(h => h.date === dStr);
                                     const isPTO = PTO_DATES.includes(dStr);
                                     const isManual = manualPTODates.has(dStr);
 
