@@ -18,6 +18,8 @@ import {
     PUBLIC_HOLIDAYS_2027,
     analyzeBreaks,
     buildCalendarDays,
+    extractICTPeriods,
+    generateCandidateICTSchedules,
     type AlgorithmId
 } from '@/core';
 import { useOptimization, type AppRoute } from '@/context/OptimizationContext';
@@ -62,6 +64,8 @@ export interface SingaporeCalendarGridProps {
     startDate: string;
     endDate: string;
     ptoDates: string[];
+    ictDates?: string[];
+    availableICTQuota?: number;
     continuousBreakDates?: Set<string>;
     compact?: boolean;
 }
@@ -75,10 +79,19 @@ export function SingaporeCalendarGrid({
     startDate,
     endDate,
     ptoDates,
+    ictDates = [],
+    availableICTQuota,
     continuousBreakDates = new Set(),
     compact = false
 }: SingaporeCalendarGridProps) {
     const ptoSet = useMemo(() => new Set(ptoDates), [ptoDates]);
+    const ictSet = useMemo(() => new Set(ictDates), [ictDates]);
+
+    const ictPeriods = useMemo(() => {
+        if (ictDates.length === 0) return [];
+        const calDays = buildCalendarDays(startDate, endDate, PUBLIC_HOLIDAYS_2027);
+        return extractICTPeriods(calDays, ictDates);
+    }, [startDate, endDate, ictDates]);
 
     return (
         <div>
@@ -93,13 +106,40 @@ export function SingaporeCalendarGrid({
                 </span>
                 <span>
                     <span className="inline-block mr-1.5 w-3 h-3 rounded-full bg-green-500/80 align-middle"></span>
-                    Allocated / Suggested PTO
+                    PTO (Allocated / Suggested)
+                </span>
+                <span>
+                    <span className="inline-block mr-1.5 w-3 h-3 rounded-full bg-cyan-500 align-middle"></span>
+                    ICT (In-Camp Training)
                 </span>
                 <span>
                     <span className="inline-block mr-1.5 w-3 h-3 rounded-full ring-2 ring-amber-400 bg-amber-400/20 align-middle"></span>
-                    Continuous Break
+                    Combined Continuous Break
                 </span>
             </div>
+
+            {ictDates.length > 0 && (
+                <div className="mb-6 p-3.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-xs flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-cyan-800 dark:text-cyan-200 uppercase tracking-wider">
+                            Active ICT Allocation:
+                        </span>
+                        {ictPeriods.map(p => (
+                            <span
+                                key={p.periodNumber}
+                                className="px-2.5 py-1 rounded-lg bg-cyan-600 text-white font-semibold shadow-sm"
+                            >
+                                ICT {p.periodNumber}: {p.startDate} → {p.endDate} ({p.duration}d)
+                            </span>
+                        ))}
+                    </div>
+                    <div className="font-semibold text-cyan-800 dark:text-cyan-200">
+                        Total ICT Consumed: {ictDates.length} calendar days
+                        {availableICTQuota !== undefined &&
+                            ` • Remaining ICT Allowance: ${Math.max(0, availableICTQuota - ictDates.length)} calendar days`}
+                    </div>
+                </div>
+            )}
 
             <div
                 className={cn(
@@ -150,6 +190,7 @@ export function SingaporeCalendarGrid({
                                         h => h.date === dateStr
                                     );
                                     const isPTO = ptoSet.has(dateStr);
+                                    const isICT = ictSet.has(dateStr);
                                     const isInContinuousBreak = continuousBreakDates.has(dateStr);
                                     const date = new Date(year, monthIndex, day);
                                     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
@@ -170,31 +211,42 @@ export function SingaporeCalendarGrid({
                                                     'ring-2 ring-amber-400/75 ring-offset-1 ring-offset-transparent',
                                                 !isOutOfRange &&
                                                     isWeekend &&
+                                                    !isICT &&
                                                     'bg-indigo-500/5 text-indigo-700 dark:text-indigo-300',
-                                                !isOutOfRange && holiday
-                                                    ? 'bg-red-500 text-white font-bold shadow-md shadow-red-500/20'
-                                                    : !isOutOfRange && isPTO
-                                                      ? 'bg-green-500 text-white font-bold shadow-md shadow-green-500/20'
-                                                      : undefined
+                                                !isOutOfRange && isICT
+                                                    ? 'bg-cyan-500 text-white font-bold shadow-md shadow-cyan-500/25'
+                                                    : !isOutOfRange && holiday
+                                                      ? 'bg-red-500 text-white font-bold shadow-md shadow-red-500/20'
+                                                      : !isOutOfRange && isPTO
+                                                        ? 'bg-green-500 text-white font-bold shadow-md shadow-green-500/20'
+                                                        : undefined
                                             )}
                                             title={
-                                                holiday?.name ??
-                                                (isPTO
-                                                    ? 'Allocated / Suggested PTO'
-                                                    : isInContinuousBreak
-                                                      ? 'Part of Continuous Break'
-                                                      : undefined)
+                                                isICT
+                                                    ? holiday
+                                                        ? `NS ICT (In-Camp Training • ${holiday.name})`
+                                                        : 'NS ICT (In-Camp Training)'
+                                                    : holiday?.name ??
+                                                      (isPTO
+                                                          ? 'Allocated / Suggested PTO'
+                                                          : isInContinuousBreak
+                                                            ? 'Part of Continuous Break'
+                                                            : undefined)
                                             }
                                         >
                                             {day}
-                                            {(holiday || isPTO || isInContinuousBreak) &&
+                                            {(holiday || isPTO || isICT || isInContinuousBreak) &&
                                                 !isOutOfRange && (
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-gray-900 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-                                                        {holiday
-                                                            ? holiday.name
-                                                            : isPTO
-                                                              ? 'Allocated PTO'
-                                                              : 'Continuous Break'}
+                                                        {isICT
+                                                            ? holiday
+                                                                ? `NS ICT (${holiday.name})`
+                                                                : 'NS ICT (In-Camp Training)'
+                                                            : holiday
+                                                              ? holiday.name
+                                                              : isPTO
+                                                                ? 'Allocated PTO'
+                                                                : 'Continuous Break'}
                                                     </div>
                                                 )}
                                         </div>
@@ -238,14 +290,23 @@ export function Calendar() {
         navigate
     } = useOptimization();
 
-    const { legacyPTODates, requiredWorkingDaysCount } = useMemo(() => {
+    const { legacyPTODates, legacyICTDates, requiredWorkingDaysCount } = useMemo(() => {
         const calDays = buildCalendarDays(
             startDate,
             endDate,
             PUBLIC_HOLIDAYS_2027,
-            rules.restrictions
+            rules.restrictions,
+            rules.ict
         );
-        const excludedDates = new Set<string>();
+        const candidateICTSchedules = generateCandidateICTSchedules(calDays, {
+            startDate,
+            endDate,
+            ptoAllowance: duration,
+            publicHolidays: PUBLIC_HOLIDAYS_2027,
+            rules
+        });
+        const defaultICTDates = candidateICTSchedules[0] ?? [];
+        const excludedDates = new Set<string>(defaultICTDates);
         const requiredDates = new Set<string>();
         for (const d of calDays) {
             if (d.isBlackout) {
@@ -265,16 +326,17 @@ export function Calendar() {
                 excludedDates,
                 requiredDates
             ),
+            legacyICTDates: defaultICTDates,
             requiredWorkingDaysCount: requiredDates.size
         };
-    }, [startDate, endDate, duration, rules.restrictions, rules.allocation.reservePTODays]);
+    }, [startDate, endDate, duration, rules]);
 
     const remainingPTO = Math.max(
         0,
         duration - rules.allocation.reservePTODays - requiredWorkingDaysCount
     );
 
-    // Determine which PTO dates and continuous break dates to render on the main calendar
+    // Determine which PTO dates, ICT dates, and continuous break dates to render on the main calendar
     const activeAlgoResult =
         activeCalendarSource !== 'legacy' && !isResultStale(activeCalendarSource)
             ? results[activeCalendarSource]
@@ -284,6 +346,14 @@ export function Calendar() {
         ? activeAlgoResult.selectedPTODates
         : legacyPTODates;
 
+    const displayedICTDates = activeAlgoResult
+        ? activeAlgoResult.selectedICTDates
+        : legacyICTDates;
+
+    const availableICTQuota = rules.ict?.enabled
+        ? Math.max(0, rules.ict.annualICTQuota - rules.ict.reserveICTDays)
+        : undefined;
+
     const continuousBreakDates = useMemo(() => {
         if (activeAlgoResult) {
             return new Set(activeAlgoResult.continuousBreakDates);
@@ -292,15 +362,17 @@ export function Calendar() {
             startDate,
             endDate,
             PUBLIC_HOLIDAYS_2027,
-            rules.restrictions
+            rules.restrictions,
+            rules.ict
         );
         const { continuousBreakDates: legacyBreakDates } = analyzeBreaks(
             calDays,
             legacyPTODates,
-            rules.breakDuration
+            rules.breakDuration,
+            legacyICTDates
         );
         return new Set(legacyBreakDates);
-    }, [activeAlgoResult, startDate, endDate, legacyPTODates, rules]);
+    }, [activeAlgoResult, startDate, endDate, legacyPTODates, legacyICTDates, rules]);
 
     const freshResultIds = ALL_ALGORITHMS.filter(
         id => results[id] && !isResultStale(id)
@@ -364,6 +436,8 @@ export function Calendar() {
                     startDate={startDate}
                     endDate={endDate}
                     ptoDates={displayedPTODates}
+                    ictDates={displayedICTDates}
+                    availableICTQuota={availableICTQuota}
                     continuousBreakDates={continuousBreakDates}
                 />
 
@@ -637,6 +711,7 @@ export function Calendar() {
                                     PUBLIC_HOLIDAYS_2027
                                 );
                                 const ptoSet = new Set(displayedPTODates);
+                                const ictSet = new Set(displayedICTDates);
 
                                 let working = 0;
                                 let nonWorking = 0;
@@ -645,7 +720,12 @@ export function Calendar() {
                                     if (!includeWeekends && d.isWeekend) {
                                         continue;
                                     }
-                                    if (d.isWeekend || d.isPublicHoliday || ptoSet.has(d.date)) {
+                                    if (
+                                        d.isWeekend ||
+                                        d.isPublicHoliday ||
+                                        ptoSet.has(d.date) ||
+                                        ictSet.has(d.date)
+                                    ) {
                                         nonWorking++;
                                     } else {
                                         working++;

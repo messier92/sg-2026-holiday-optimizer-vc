@@ -1,9 +1,14 @@
-import { buildCalendarDays } from '../shared/calendar/index.ts';
+import { buildCalendarDays, generateCandidateICTSchedules } from '../shared/calendar/index.ts';
 import { checkUpfrontFeasibility, isAllocationHardValid } from '../shared/constraints/index.ts';
 import { compareEvaluations, evaluateObjective } from '../shared/objectives/index.ts';
 import { buildOptimizationResult } from '../shared/results/index.ts';
 import type { DPConfig, OptimizationResult, SolverOptions } from '../shared/types/index.ts';
-import { estimateDPComplexity, getDPStateKey, reconstructDPSelectedDates } from './state.ts';
+import {
+    estimateDPComplexity,
+    getDPStateKey,
+    reconstructDPSelectedDates,
+    reconstructDPSelectedICTDates
+} from './state.ts';
 import { evaluateClosedBreakGain, expandDPStateTransitions } from './transitions.ts';
 import type { DPStateNode } from './types.ts';
 
@@ -35,10 +40,12 @@ export async function solveWithDP(options: SolverOptions<DPConfig>): Promise<Opt
         input.startDate,
         input.endDate,
         input.publicHolidays,
-        input.rules.restrictions
+        input.rules.restrictions,
+        input.rules.ict
     );
     const N = calendarDays.length;
     const availablePTO = upfront.availablePTO;
+    const availableICT = upfront.availableICT;
 
     const complexity = estimateDPComplexity(N, input, config);
     if (complexity.warningMessage) {
@@ -73,142 +80,204 @@ export async function solveWithDP(options: SolverOptions<DPConfig>): Promise<Opt
                     input.rules.breakDuration[c].maxCount !== null)
         );
 
-    const initialState: DPStateNode = {
-        dayIndex: 0,
-        remPTO: availablePTO,
-        curOffDays: 0,
-        curBreakPTO: 0,
-        curConsecPTO: 0,
-        workCooldown: 0,
-        calCooldown: 0,
-        qualifyingBreaks: 0,
-        shortCount: 0,
-        mediumCount: 0,
-        longCount: 0,
-        extendedCount: 0,
-        accObjective: 0,
-        totalBreakDaysOff: 0,
-        parent: null,
-        tookPTOOnPrevDay: false
-    };
+    const candidateICTSchedules = generateCandidateICTSchedules(calendarDays, input);
+    const calendarDates = calendarDays.map(d => d.date);
 
-    let currentLayer: DPStateNode[] = [initialState];
-    let totalStatesExplored = 1;
+    let globalBestPTO: string[] | null = null;
+    let globalBestICT: string[] = [];
+    let globalBestEval = evaluateObjective(calendarDays, [], input, true, []);
+    let totalStatesExplored = 0;
     let stateLimitExceeded = false;
     let aborted = false;
 
-    const calendarDates = calendarDays.map(d => d.date);
+    for (const candidateICTDates of candidateICTSchedules) {
+        const ictScheduleSet = new Set<string>(candidateICTDates);
 
-    for (let dayIdx = 0; dayIdx < N; dayIdx++) {
-        if (signal?.aborted) {
-            aborted = true;
-            break;
-        }
+        const initialState: DPStateNode = {
+            dayIndex: 0,
+            remPTO: availablePTO,
+            remICT: availableICT,
+            curOffDays: 0,
+            curBreakPTO: 0,
+            curBreakICT: 0,
+            curICTDuration: 0,
+            ictPeriodsUsed: 0,
+            curConsecPTO: 0,
+            workCooldown: 0,
+            calCooldown: 0,
+            qualifyingBreaks: 0,
+            shortCount: 0,
+            mediumCount: 0,
+            longCount: 0,
+            extendedCount: 0,
+            accObjective: 0,
+            totalBreakDaysOff: 0,
+            parent: null,
+            tookPTOOnPrevDay: false,
+            tookICTOnPrevDay: false
+        };
 
-        if (dayIdx % 25 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-            if (onProgress) {
-                onProgress({
-                    algorithmId: 'dp',
-                    phase: `Day-by-Day Transition (Day ${dayIdx + 1} / ${N})`,
-                    percent: Math.min(95, Math.round(((dayIdx + 1) / N) * 90)),
-                    currentIteration: dayIdx + 1,
-                    maxIterations: N,
-                    statesExplored: totalStatesExplored,
-                    warning: complexity.warningMessage
-                });
+        let currentLayer: DPStateNode[] = [initialState];
+        totalStatesExplored++;
+
+        for (let dayIdx = 0; dayIdx < N; dayIdx++) {
+            if (signal?.aborted) {
+                aborted = true;
+                break;
             }
-        }
 
-        const day = calendarDays[dayIdx];
-
-        if (config.enableMemoization) {
-            const nextMap = new Map<string, DPStateNode>();
-
-            for (let i = 0; i < currentLayer.length; i++) {
-                const st = currentLayer[i];
-                const children = expandDPStateTransitions(st, day, input);
-
-                for (let j = 0; j < children.length; j++) {
-                    const child = children[j];
-                    totalStatesExplored++;
-
-                    const key = getDPStateKey(child, input, trackGlobalCounts);
-                    const existing = nextMap.get(key);
-                    if (!existing || child.accObjective > existing.accObjective) {
-                        nextMap.set(key, child);
-                    }
+            if (dayIdx % 25 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+                if (onProgress) {
+                    onProgress({
+                        algorithmId: 'dp',
+                        phase: `Day-by-Day Transition (Day ${dayIdx + 1} / ${N})`,
+                        percent: Math.min(95, Math.round(((dayIdx + 1) / N) * 90)),
+                        currentIteration: dayIdx + 1,
+                        maxIterations: N,
+                        statesExplored: totalStatesExplored,
+                        warning: complexity.warningMessage
+                    });
                 }
-
-                if (totalStatesExplored >= config.stateExplorationLimit) {
-                    stateLimitExceeded = true;
-                    break;
-                }
             }
 
-            let nextLayer = Array.from(nextMap.values());
-            if (nextLayer.length > config.maxStateCount) {
-                stateLimitExceeded = true;
-                nextLayer.sort((a, b) => b.accObjective - a.accObjective);
-                nextLayer = nextLayer.slice(0, config.maxStateCount);
-            }
+            const day = calendarDays[dayIdx];
 
-            currentLayer = nextLayer;
-        } else {
-            // Unmemoized tree expansion
-            let nextLayer: DPStateNode[] = [];
-            for (let i = 0; i < currentLayer.length; i++) {
-                const st = currentLayer[i];
-                const children = expandDPStateTransitions(st, day, input);
-                for (let j = 0; j < children.length; j++) {
-                    nextLayer.push(children[j]);
-                    totalStatesExplored++;
-                    if (totalStatesExplored >= config.stateExplorationLimit) {
-                        stateLimitExceeded = true;
-                        break;
-                    }
-                }
-                if (stateLimitExceeded) break;
-            }
-
-            if (nextLayer.length > config.maxStateCount) {
-                stateLimitExceeded = true;
-                nextLayer.sort((a, b) => b.accObjective - a.accObjective);
-                nextLayer = nextLayer.slice(0, config.maxStateCount);
-            }
-            currentLayer = nextLayer;
-        }
-
-        if (currentLayer.length === 0) {
-            break;
-        }
-
-        if (stateLimitExceeded) {
-            // Fast-forward remaining days deterministically (only taking required PTO) so we still reach day N
-            warnings.push(
-                `DP state exploration or active state limit (${config.maxStateCount.toLocaleString()} max states / ${config.stateExplorationLimit.toLocaleString()} exploration limit) was reached at day ${dayIdx + 1}/${N}. States were pruned; global optimality is not guaranteed.`
-            );
-            for (let remIdx = dayIdx + 1; remIdx < N; remIdx++) {
-                const remDay = calendarDays[remIdx];
+            if (config.enableMemoization) {
                 const nextMap = new Map<string, DPStateNode>();
-                const beamWidth = Math.min(250, config.maxStateCount);
-                currentLayer.sort((a, b) => b.accObjective - a.accObjective);
-                const beam = currentLayer.slice(0, beamWidth);
 
-                for (const st of beam) {
-                    const children = expandDPStateTransitions(st, remDay, input);
-                    for (const child of children) {
-                        const key = getDPStateKey(child, input, false);
+                for (let i = 0; i < currentLayer.length; i++) {
+                    const st = currentLayer[i];
+                    const children = expandDPStateTransitions(st, day, input, ictScheduleSet);
+
+                    for (let j = 0; j < children.length; j++) {
+                        const child = children[j];
+                        totalStatesExplored++;
+
+                        const key = getDPStateKey(child, input, trackGlobalCounts);
                         const existing = nextMap.get(key);
                         if (!existing || child.accObjective > existing.accObjective) {
                             nextMap.set(key, child);
                         }
                     }
+
+                    if (totalStatesExplored >= config.stateExplorationLimit) {
+                        stateLimitExceeded = true;
+                        break;
+                    }
                 }
-                currentLayer = Array.from(nextMap.values());
-                if (currentLayer.length === 0) break;
+
+                let nextLayer = Array.from(nextMap.values());
+                if (nextLayer.length > config.maxStateCount) {
+                    stateLimitExceeded = true;
+                    nextLayer.sort((a, b) => b.accObjective - a.accObjective);
+                    nextLayer = nextLayer.slice(0, config.maxStateCount);
+                }
+
+                currentLayer = nextLayer;
+            } else {
+                // Unmemoized tree expansion
+                let nextLayer: DPStateNode[] = [];
+                for (let i = 0; i < currentLayer.length; i++) {
+                    const st = currentLayer[i];
+                    const children = expandDPStateTransitions(st, day, input, ictScheduleSet);
+                    for (let j = 0; j < children.length; j++) {
+                        nextLayer.push(children[j]);
+                        totalStatesExplored++;
+                        if (totalStatesExplored >= config.stateExplorationLimit) {
+                            stateLimitExceeded = true;
+                            break;
+                        }
+                    }
+                    if (stateLimitExceeded) break;
+                }
+
+                if (nextLayer.length > config.maxStateCount) {
+                    stateLimitExceeded = true;
+                    nextLayer.sort((a, b) => b.accObjective - a.accObjective);
+                    nextLayer = nextLayer.slice(0, config.maxStateCount);
+                }
+                currentLayer = nextLayer;
             }
-            break;
+
+            if (currentLayer.length === 0) {
+                break;
+            }
+
+            if (stateLimitExceeded) {
+                warnings.push(
+                    `DP state exploration or active state limit (${config.maxStateCount.toLocaleString()} max states / ${config.stateExplorationLimit.toLocaleString()} exploration limit) was reached at day ${dayIdx + 1}/${N}. States were pruned; global optimality is not guaranteed.`
+                );
+                for (let remIdx = dayIdx + 1; remIdx < N; remIdx++) {
+                    const remDay = calendarDays[remIdx];
+                    const nextMap = new Map<string, DPStateNode>();
+                    const beamWidth = Math.min(250, config.maxStateCount);
+                    currentLayer.sort((a, b) => b.accObjective - a.accObjective);
+                    const beam = currentLayer.slice(0, beamWidth);
+
+                    for (const st of beam) {
+                        const children = expandDPStateTransitions(st, remDay, input, ictScheduleSet);
+                        for (const child of children) {
+                            const key = getDPStateKey(child, input, false);
+                            const existing = nextMap.get(key);
+                            if (!existing || child.accObjective > existing.accObjective) {
+                                nextMap.set(key, child);
+                            }
+                        }
+                    }
+                    currentLayer = Array.from(nextMap.values());
+                    if (currentLayer.length === 0) break;
+                }
+                break;
+            }
+        }
+
+        if (aborted) break;
+
+        const scoredTerminals = currentLayer.map(st => {
+            const tailGain = evaluateClosedBreakGain(
+                st.curOffDays,
+                st.curBreakPTO,
+                input,
+                st.curBreakICT
+            );
+            return {
+                state: st,
+                closedScore: st.accObjective + tailGain.objectiveDelta,
+                finalQualifying: st.qualifyingBreaks + (tailGain.isQualifying ? 1 : 0)
+            };
+        });
+
+        scoredTerminals.sort((a, b) => b.closedScore - a.closedScore);
+
+        const minPTORequired = input.rules.allocation.allowUnusedPTO
+            ? input.rules.allocation.minPTOToAllocate
+            : availablePTO;
+
+        let checkedCount = 0;
+        for (const item of scoredTerminals) {
+            const usedPTO = availablePTO - item.state.remPTO;
+            if (usedPTO < minPTORequired) continue;
+            if (item.finalQualifying < input.rules.distribution.minNumberOfBreaks) continue;
+            if (
+                input.rules.distribution.maxNumberOfBreaks !== null &&
+                item.finalQualifying > input.rules.distribution.maxNumberOfBreaks
+            ) {
+                continue;
+            }
+
+            const dates = reconstructDPSelectedDates(item.state, calendarDates);
+            const ictDates = reconstructDPSelectedICTDates(item.state, calendarDates);
+            if (isAllocationHardValid(calendarDays, dates, input, ictDates)) {
+                const ev = evaluateObjective(calendarDays, dates, input, true, ictDates);
+                if (globalBestPTO === null || compareEvaluations(ev, globalBestEval, true) > 0) {
+                    globalBestPTO = dates;
+                    globalBestICT = ictDates;
+                    globalBestEval = ev;
+                }
+                checkedCount++;
+                if (checkedCount >= 120) break;
+            }
         }
     }
 
@@ -216,6 +285,7 @@ export async function solveWithDP(options: SolverOptions<DPConfig>): Promise<Opt
         return buildOptimizationResult({
             algorithmId: 'dp',
             selectedPTODates: [],
+            selectedICTDates: [],
             input,
             calendarDays,
             executionTimeMs: performance.now() - startTime,
@@ -228,56 +298,13 @@ export async function solveWithDP(options: SolverOptions<DPConfig>): Promise<Opt
         });
     }
 
-    // Close any open off-day block at the end of the date range (day N) and evaluate terminal states
-    let bestPTO: string[] | null = null;
-    let bestEval = evaluateObjective(calendarDays, [], input, true);
-
-    // Sort terminal states by closed objective descending and validate top candidates
-    const scoredTerminals = currentLayer.map(st => {
-        const tailGain = evaluateClosedBreakGain(st.curOffDays, st.curBreakPTO, input);
-        return {
-            state: st,
-            closedScore: st.accObjective + tailGain.objectiveDelta,
-            finalQualifying: st.qualifyingBreaks + (tailGain.isQualifying ? 1 : 0)
-        };
-    });
-
-    scoredTerminals.sort((a, b) => b.closedScore - a.closedScore);
-
-    const minPTORequired = input.rules.allocation.allowUnusedPTO
-        ? input.rules.allocation.minPTOToAllocate
-        : availablePTO;
-
-    let checkedCount = 0;
-    for (const item of scoredTerminals) {
-        const usedPTO = availablePTO - item.state.remPTO;
-        if (usedPTO < minPTORequired) continue;
-        if (item.finalQualifying < input.rules.distribution.minNumberOfBreaks) continue;
-        if (
-            input.rules.distribution.maxNumberOfBreaks !== null &&
-            item.finalQualifying > input.rules.distribution.maxNumberOfBreaks
-        ) {
-            continue;
-        }
-
-        const dates = reconstructDPSelectedDates(item.state, calendarDates);
-        if (isAllocationHardValid(calendarDays, dates, input)) {
-            const ev = evaluateObjective(calendarDays, dates, input, true);
-            if (bestPTO === null || compareEvaluations(ev, bestEval, true) > 0) {
-                bestPTO = dates;
-                bestEval = ev;
-            }
-            checkedCount++;
-            if (checkedCount >= 120) break;
-        }
-    }
-
     const elapsed = performance.now() - startTime;
 
-    if (bestPTO === null) {
+    if (globalBestPTO === null) {
         return buildOptimizationResult({
             algorithmId: 'dp',
             selectedPTODates: [],
+            selectedICTDates: [],
             input,
             calendarDays,
             executionTimeMs: elapsed,
@@ -295,7 +322,8 @@ export async function solveWithDP(options: SolverOptions<DPConfig>): Promise<Opt
 
     return buildOptimizationResult({
         algorithmId: 'dp',
-        selectedPTODates: bestPTO,
+        selectedPTODates: globalBestPTO,
+        selectedICTDates: globalBestICT,
         input,
         calendarDays,
         executionTimeMs: elapsed,

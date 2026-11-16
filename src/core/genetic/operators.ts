@@ -31,10 +31,21 @@ export function repairChromosomeGenes(
         }
     }
 
+    const hasICFGap = (idxA: number, idxB: number): boolean => {
+        if (ctx.selectedICTSet.size === 0 || idxA < 0 || idxB >= M) return false;
+        for (let c = ctx.workingDays[idxA].index + 1; c < ctx.workingDays[idxB].index; c++) {
+            if (ctx.selectedICTSet.has(ctx.calendarDays[c].date)) return true;
+        }
+        return false;
+    };
+
     // 2. Enforce maxConsecutivePTOWorkingDays
     if (maxConsec !== null && maxConsec > 0) {
         let run = 0;
         for (let i = 0; i < M; i++) {
+            if (i > 0 && hasICFGap(i - 1, i)) {
+                run = 0;
+            }
             if (genes[i] === 1) {
                 run++;
                 if (run > maxConsec && ctx.requiredMask[i] === 0) {
@@ -153,6 +164,9 @@ export function repairChromosomeGenes(
                 const lo = Math.max(0, pos - maxConsec - 1);
                 const hi = Math.min(M - 1, pos + maxConsec + 1);
                 for (let k = lo; k <= hi; k++) {
+                    if (k > lo && hasICFGap(k - 1, k)) {
+                        r = 0;
+                    }
                     if (genes[k] === 1) {
                         r++;
                         if (r > maxConsec) {

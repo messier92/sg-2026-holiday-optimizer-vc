@@ -49,6 +49,11 @@ export function AlgorithmPage({ algorithmId }: { algorithmId: AlgorithmId }) {
         return result.selectedPTODates;
     }, [result, stale]);
 
+    const displayedICT = useMemo(() => {
+        if (!result || stale) return [];
+        return result.selectedICTDates;
+    }, [result, stale]);
+
     const enabledSecondaries = Object.entries(rules.objectives.secondaries)
         .filter(([, cfg]) => cfg.enabled)
         .map(([k, cfg]) => `${k.replace(/_/g, ' ')} (w=${cfg.weight})`);
@@ -319,6 +324,12 @@ export function AlgorithmPage({ algorithmId }: { algorithmId: AlgorithmId }) {
                     startDate={startDate}
                     endDate={endDate}
                     ptoDates={displayedPTO}
+                    ictDates={displayedICT}
+                    availableICTQuota={
+                        rules.ict?.enabled
+                            ? Math.max(0, rules.ict.annualICTQuota - rules.ict.reserveICTDays)
+                            : undefined
+                    }
                     continuousBreakDates={continuousBreakDates}
                 />
             </div>

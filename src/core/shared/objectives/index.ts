@@ -1,5 +1,6 @@
 import {
     analyzeBreaks,
+    extractICTPeriods,
     getMaxConsecutivePTORun,
     type CandidateBreakInterval
 } from '../calendar/index.ts';
@@ -55,23 +56,32 @@ export function computeBreakDistributionScore(
 }
 
 /**
- * Evaluates both the primary objective and weighted secondary objectives for a candidate PTO set.
+ * Evaluates both the primary objective and weighted secondary objectives for a candidate PTO + ICT set.
  */
 export function evaluateObjective(
     calendarDays: CalendarDay[],
     ptoDates: Iterable<string>,
     input: SharedOptimizationInput,
-    enableLexicographic = true
+    enableLexicographic = true,
+    ictDates?: Iterable<string>
 ): ObjectiveEvaluation {
     const ptoSet = new Set(ptoDates);
+    const ictSet = new Set(ictDates ?? []);
     const { rules, ptoAllowance } = input;
     const availablePTO = Math.max(0, ptoAllowance - rules.allocation.reservePTODays);
     const ptoConsumed = ptoSet.size;
+    const ict = rules.ict;
+    const availableICT = ict?.enabled
+        ? Math.max(0, ict.annualICTQuota - ict.reserveICTDays)
+        : 0;
+    const ictConsumed = ictSet.size;
+    const ictUtilization = availableICT > 0 ? (ictConsumed / availableICT) * 100 : 0;
 
     const { activeBreaks, qualifyingBreaks, categoryCounts } = analyzeBreaks(
         calendarDays,
         ptoSet,
-        rules.breakDuration
+        rules.breakDuration,
+        ictSet
     );
 
     const totalCalendarDaysOff = activeBreaks.reduce((sum, b) => sum + b.duration, 0);
@@ -82,6 +92,13 @@ export function evaluateObjective(
         qualifyingBreaks.length > 0 ? qualifyingBreaks : activeBreaks,
         calendarDays.length
     );
+
+    const combinedICTPTOBonus = activeBreaks.reduce((acc, b) => {
+        if (b.ictUsed > 0 && (b.ptoUsed > 0 || b.publicHolidayDays > 0 || b.weekendDays > 0)) {
+            return acc + b.duration + (b.ptoUsed > 0 ? 4 : 0) + (b.publicHolidayDays > 0 ? 3 : 0);
+        }
+        return acc;
+    }, 0);
 
     let primaryScore = 0;
     switch (rules.objectives.primary) {
@@ -97,8 +114,14 @@ export function evaluateObjective(
         case 'maximize_pto_efficiency':
             primaryScore = Number(ptoEfficiency.toFixed(6));
             break;
+        case 'maximize_ict_utilization':
+            primaryScore = Number((ictUtilization + totalCalendarDaysOff * 0.001).toFixed(6));
+            break;
         case 'maximize_break_distribution':
             primaryScore = distributionScore;
+            break;
+        case 'combine_ict_with_pto_and_holidays':
+            primaryScore = totalCalendarDaysOff + combinedICTPTOBonus * 0.5;
             break;
         case 'minimize_pto_consumption':
             primaryScore = availablePTO - ptoConsumed;
@@ -109,38 +132,93 @@ export function evaluateObjective(
     const sec = rules.objectives.secondaries;
     let secondaryScore = 0;
 
-    if (sec.prefer_longer_breaks.enabled) {
+    if (sec.prefer_longer_breaks?.enabled) {
         const sumSq = activeBreaks.reduce((s, b) => s + b.duration * b.duration, 0);
         secondaryScore += sec.prefer_longer_breaks.weight * (sumSq * 0.1);
     }
 
-    if (sec.prefer_more_frequent_breaks.enabled) {
-        secondaryScore += sec.prefer_more_frequent_breaks.weight * (qualifyingBreakCount * 5 + activeBreaks.length * 2);
+    if (sec.prefer_more_frequent_breaks?.enabled) {
+        secondaryScore +=
+            sec.prefer_more_frequent_breaks.weight *
+            (qualifyingBreakCount * 5 + activeBreaks.length * 2);
     }
 
-    if (sec.prefer_evenly_distributed_breaks.enabled || rules.distribution.evenlyDistributeBreaks) {
-        const w = sec.prefer_evenly_distributed_breaks.enabled
+    if (sec.prefer_evenly_distributed_breaks?.enabled || rules.distribution.evenlyDistributeBreaks) {
+        const w = sec.prefer_evenly_distributed_breaks?.enabled
             ? sec.prefer_evenly_distributed_breaks.weight
             : 1.0;
         secondaryScore += w * (distributionScore * 0.5);
     }
 
-    if (sec.minimize_consecutive_pto.enabled) {
-        const maxConsec = getMaxConsecutivePTORun(calendarDays, ptoSet);
+    if (sec.minimize_consecutive_pto?.enabled) {
+        const maxConsec = getMaxConsecutivePTORun(calendarDays, ptoSet, ictSet);
         secondaryScore -= sec.minimize_consecutive_pto.weight * (maxConsec * 3);
     }
 
-    if (sec.minimize_unused_pto.enabled) {
+    if (sec.minimize_unused_pto?.enabled) {
         const unused = Math.max(0, availablePTO - ptoConsumed);
         secondaryScore -= sec.minimize_unused_pto.weight * (unused * 4);
     }
 
-    if (sec.maximize_total_days_off.enabled) {
+    if (sec.maximize_total_days_off?.enabled) {
         secondaryScore += sec.maximize_total_days_off.weight * (totalCalendarDaysOff * 2);
     }
 
+    if (sec.prefer_combining_ict_with_weekends?.enabled && ict?.enabled) {
+        const ictWeekendBreaks = activeBreaks.filter(b => b.ictUsed > 0 && b.weekendDays > 0).length;
+        secondaryScore += sec.prefer_combining_ict_with_weekends.weight * (ictWeekendBreaks * 4);
+    }
+
+    if (sec.prefer_combining_ict_with_holidays?.enabled && ict?.enabled) {
+        const ictHolidayBreaks = activeBreaks.filter(
+            b => b.ictUsed > 0 && b.publicHolidayDays > 0
+        ).length;
+        secondaryScore += sec.prefer_combining_ict_with_holidays.weight * (ictHolidayBreaks * 6);
+    }
+
+    if (sec.prefer_connecting_ict_with_pto?.enabled && ict?.enabled) {
+        const connectedBreaks = activeBreaks.filter(b => b.ictUsed > 0 && b.ptoUsed > 0).length;
+        secondaryScore += sec.prefer_connecting_ict_with_pto.weight * (connectedBreaks * 8);
+    }
+
+    if ((sec.avoid_concentrating_ict?.enabled || ict?.distributeICTThroughoutYear) && ict?.enabled) {
+        const ictPeriods = extractICTPeriods(calendarDays, ictSet, ict.fixedICTPeriods);
+        if (ictPeriods.length > 0) {
+            const ictAsBreaks: BreakDetail[] = ictPeriods.map(p => ({
+                startDate: p.startDate,
+                endDate: p.endDate,
+                startIndex: p.startIndex,
+                endIndex: p.endIndex,
+                duration: p.duration,
+                ptoDates: [],
+                ptoUsed: 0,
+                ictDates: [],
+                ictUsed: p.duration,
+                weekendDays: p.weekendDaysCovered,
+                publicHolidayDays: p.publicHolidayDaysCovered,
+                isQualifying: true,
+                primaryCategory: 'short',
+                matchedCategories: []
+            }));
+            const ictDistScore = computeBreakDistributionScore(ictAsBreaks, calendarDays.length);
+            const w = sec.avoid_concentrating_ict?.enabled ? sec.avoid_concentrating_ict.weight : 1.0;
+            secondaryScore += w * (ictDistScore * 0.4);
+        }
+    }
+
+    if (sec.preserve_pto_for_non_ict?.enabled && ict?.enabled) {
+        const nonICTBreaksWithPTO = activeBreaks.filter(b => b.ptoUsed > 0 && b.ictUsed === 0).length;
+        const unusedPTO = Math.max(0, availablePTO - ptoConsumed);
+        secondaryScore +=
+            sec.preserve_pto_for_non_ict.weight * (nonICTBreaksWithPTO * 5 + unusedPTO * 2);
+    }
+
     // Canonical tie-breaking so equal primary + secondary scores still prefer more break days & efficiency
-    secondaryScore += totalCalendarDaysOff * 0.01 + qualifyingBreakCount * 0.005 + ptoEfficiency * 0.001;
+    secondaryScore +=
+        totalCalendarDaysOff * 0.01 +
+        qualifyingBreakCount * 0.005 +
+        ptoEfficiency * 0.001 +
+        ictUtilization * 0.0001;
     secondaryScore = Number(secondaryScore.toFixed(6));
 
     const combinedScore = enableLexicographic
@@ -199,6 +277,10 @@ export function computeIntervalObjectiveWeight(
             break;
         case 'maximize_pto_efficiency':
             primaryPart = interval.ptoCost > 0 ? interval.calDuration / interval.ptoCost : 0;
+            break;
+        case 'maximize_ict_utilization':
+        case 'combine_ict_with_pto_and_holidays':
+            primaryPart = interval.calDuration;
             break;
         case 'maximize_break_distribution': {
             const center = (interval.calStartIdx + interval.calEndIdx) / 2;

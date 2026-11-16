@@ -12,7 +12,8 @@ import type { DPStateNode } from './types.ts';
 export function evaluateClosedBreakGain(
     curOffDays: number,
     curBreakPTO: number,
-    input: SharedOptimizationInput
+    input: SharedOptimizationInput,
+    curBreakICT = 0
 ): {
     objectiveDelta: number;
     isQualifying: boolean;
@@ -36,7 +37,7 @@ export function evaluateClosedBreakGain(
 
     const { rules } = input;
     const classification = classifyBreakDuration(curOffDays, rules.breakDuration);
-    const isActiveBreak = classification.isQualifying || curBreakPTO > 0;
+    const isActiveBreak = classification.isQualifying || curBreakPTO > 0 || curBreakICT > 0;
 
     let shortAdd = 0;
     let mediumAdd = 0;
@@ -67,6 +68,10 @@ export function evaluateClosedBreakGain(
             break;
         case 'maximize_pto_efficiency':
             primaryPart = curBreakPTO > 0 ? activeBreakDaysAdd / curBreakPTO : 0;
+            break;
+        case 'maximize_ict_utilization':
+        case 'combine_ict_with_pto_and_holidays':
+            primaryPart = activeBreakDaysAdd + (curBreakICT > 0 && curBreakPTO > 0 ? 4 : 0);
             break;
         case 'maximize_break_distribution':
             primaryPart = classification.isQualifying ? 10 + activeBreakDaysAdd * 0.2 : activeBreakDaysAdd * 0.1;
@@ -115,7 +120,8 @@ export function evaluateClosedBreakGain(
 export function expandDPStateTransitions(
     state: DPStateNode,
     day: CalendarDay,
-    input: SharedOptimizationInput
+    input: SharedOptimizationInput,
+    ictScheduleSet?: ReadonlySet<string>
 ): DPStateNode[] {
     const { rules } = input;
     const minWorkSpacing = rules.distribution.minWorkingDaysBetweenBreaks;
@@ -124,18 +130,52 @@ export function expandDPStateTransitions(
 
     const nextStates: DPStateNode[] = [];
 
+    // Case 0: Allocated ICT Day (from ICT schedule)
+    // Consumes 1 ICT calendar day, never consumes PTO, and extends the current continuous break!
+    if (ictScheduleSet && ictScheduleSet.has(day.date)) {
+        const nextCalCooldown = Math.max(0, state.calCooldown - 1);
+        const isStartingNewICTPeriod = state.curICTDuration === 0;
+        nextStates.push({
+            dayIndex: day.index + 1,
+            remPTO: state.remPTO,
+            remICT: Math.max(0, state.remICT - 1),
+            curOffDays: state.curOffDays + 1,
+            curBreakPTO: state.curBreakPTO,
+            curBreakICT: state.curBreakICT + 1,
+            curICTDuration: state.curICTDuration + 1,
+            ictPeriodsUsed: isStartingNewICTPeriod
+                ? state.ictPeriodsUsed + 1
+                : state.ictPeriodsUsed,
+            curConsecPTO: 0,
+            workCooldown: state.workCooldown,
+            calCooldown: nextCalCooldown,
+            qualifyingBreaks: state.qualifyingBreaks,
+            shortCount: state.shortCount,
+            mediumCount: state.mediumCount,
+            longCount: state.longCount,
+            extendedCount: state.extendedCount,
+            accObjective: state.accObjective,
+            totalBreakDaysOff: state.totalBreakDaysOff,
+            parent: state,
+            tookPTOOnPrevDay: false,
+            tookICTOnPrevDay: true
+        });
+        return nextStates;
+    }
+
     // Case 1: Fixed non-working day (Weekend or Singapore Public Holiday)
     // Never consumes PTO; automatically extends the current off-day streak.
     if (day.isFixedOff) {
-        // Note:Fixed off days that become part of the next break do not count as gap days between breaks;
-        // only decrement calCooldown if we are not about to merge this fixed off block into a PTO break,
-        // or track calCooldown across worked days.
         const nextCalCooldown = Math.max(0, state.calCooldown - 1);
         nextStates.push({
             dayIndex: day.index + 1,
             remPTO: state.remPTO,
+            remICT: state.remICT,
             curOffDays: state.curOffDays + 1,
             curBreakPTO: state.curBreakPTO,
+            curBreakICT: state.curBreakICT,
+            curICTDuration: 0,
+            ictPeriodsUsed: state.ictPeriodsUsed,
             curConsecPTO: state.curConsecPTO,
             workCooldown: state.workCooldown,
             calCooldown: nextCalCooldown,
@@ -147,7 +187,8 @@ export function expandDPStateTransitions(
             accObjective: state.accObjective,
             totalBreakDaysOff: state.totalBreakDaysOff,
             parent: state,
-            tookPTOOnPrevDay: false
+            tookPTOOnPrevDay: false,
+            tookICTOnPrevDay: false
         });
         return nextStates;
     }
@@ -157,7 +198,12 @@ export function expandDPStateTransitions(
     // Decision A: Work today (do NOT allocate PTO) — allowed unless today is a required PTO date
     if (!day.isRequiredPTO) {
         // Working today closes any ongoing off-day streak!
-        const gain = evaluateClosedBreakGain(state.curOffDays, state.curBreakPTO, input);
+        const gain = evaluateClosedBreakGain(
+            state.curOffDays,
+            state.curBreakPTO,
+            input,
+            state.curBreakICT
+        );
 
         const nextQualifying = state.qualifyingBreaks + (gain.isQualifying ? 1 : 0);
         const nextShort = state.shortCount + gain.shortAdd;
@@ -196,8 +242,12 @@ export function expandDPStateTransitions(
             nextStates.push({
                 dayIndex: day.index + 1,
                 remPTO: state.remPTO,
+                remICT: state.remICT,
                 curOffDays: 0,
                 curBreakPTO: 0,
+                curBreakICT: 0,
+                curICTDuration: 0,
+                ictPeriodsUsed: state.ictPeriodsUsed,
                 curConsecPTO: 0,
                 workCooldown: nextWorkCooldown,
                 calCooldown: nextCalCooldown,
@@ -209,13 +259,14 @@ export function expandDPStateTransitions(
                 accObjective: state.accObjective + gain.objectiveDelta,
                 totalBreakDaysOff: state.totalBreakDaysOff + gain.activeBreakDaysAdd,
                 parent: state,
-                tookPTOOnPrevDay: false
+                tookPTOOnPrevDay: false,
+                tookICTOnPrevDay: false
             });
         }
     }
 
     // Decision B: Allocate 1 PTO day today
-    if (state.remPTO > 0 && isWorkingDayAllowedForPTO(day, rules)) {
+    if (state.remPTO > 0 && isWorkingDayAllowedForPTO(day, rules, ictScheduleSet)) {
         const nextConsecPTO = state.curConsecPTO + 1;
         const consecOk = maxConsecPTO === null || nextConsecPTO <= maxConsecPTO;
 
@@ -227,8 +278,12 @@ export function expandDPStateTransitions(
             nextStates.push({
                 dayIndex: day.index + 1,
                 remPTO: state.remPTO - 1,
+                remICT: state.remICT,
                 curOffDays: state.curOffDays + 1,
                 curBreakPTO: state.curBreakPTO + 1,
+                curBreakICT: state.curBreakICT,
+                curICTDuration: 0,
+                ictPeriodsUsed: state.ictPeriodsUsed,
                 curConsecPTO: nextConsecPTO,
                 workCooldown: 0,
                 calCooldown: 0,
@@ -240,7 +295,8 @@ export function expandDPStateTransitions(
                 accObjective: state.accObjective,
                 totalBreakDaysOff: state.totalBreakDaysOff,
                 parent: state,
-                tookPTOOnPrevDay: true
+                tookPTOOnPrevDay: true,
+                tookICTOnPrevDay: false
             });
         }
     }

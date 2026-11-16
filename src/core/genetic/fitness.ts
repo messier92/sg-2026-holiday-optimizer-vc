@@ -12,8 +12,19 @@ import type { Chromosome, GARunContext } from './types.ts';
  */
 export function evaluateChromosomeFitness(genes: Uint8Array, ctx: GARunContext): Chromosome {
     const dates = chromosomeToDates(genes, ctx);
-    const isValid = isAllocationHardValid(ctx.calendarDays, dates, ctx.input);
-    const evalObj = evaluateObjective(ctx.calendarDays, dates, ctx.input, true);
+    const isValid = isAllocationHardValid(
+        ctx.calendarDays,
+        dates,
+        ctx.input,
+        ctx.selectedICTDates
+    );
+    const evalObj = evaluateObjective(
+        ctx.calendarDays,
+        dates,
+        ctx.input,
+        true,
+        ctx.selectedICTDates
+    );
 
     if (isValid) {
         return {
@@ -29,7 +40,8 @@ export function evaluateChromosomeFitness(genes: Uint8Array, ctx: GARunContext):
     const { qualifyingBreaks, categoryCounts } = analyzeBreaks(
         ctx.calendarDays,
         dates,
-        ctx.input.rules.breakDuration
+        ctx.input.rules.breakDuration,
+        ctx.selectedICTDates
     );
     const { rules } = ctx.input;
     let penalty = 1e9;

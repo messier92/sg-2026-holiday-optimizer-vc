@@ -1,3 +1,4 @@
+import { buildCalendarDays, generateCandidateICTSchedules } from '../shared/calendar/index.ts';
 import { areIntervalsCompatible, checkUpfrontFeasibility, isAllocationHardValid } from '../shared/constraints/index.ts';
 import { buildOptimizationResult } from '../shared/results/index.ts';
 import type { CPSATConfig, OptimizationResult, SolverOptions } from '../shared/types/index.ts';
@@ -39,49 +40,66 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
         });
     }
 
-    const model = buildCPSATModel(input);
-    assignCPSATObjectiveWeights(model, input, config.enableLexicographic);
+    const baseCalendarDays = buildCalendarDays(
+        input.startDate,
+        input.endDate,
+        input.publicHolidays,
+        input.rules.restrictions,
+        input.rules.ict
+    );
+    const candidateICTSchedules = generateCandidateICTSchedules(baseCalendarDays, input);
 
-    const M = model.workingDays.length;
-    const B = model.availablePTO;
+    let globalBestPTO: string[] | null = null;
+    let globalBestICT: string[] = [];
+    let globalBestEval = evaluateCPSATSolution(
+        baseCalendarDays,
+        [],
+        input,
+        config.enableLexicographic,
+        []
+    );
+    let totalBranchesAll = 0;
+    let anyTimedOut = false;
+    let allSearchExhausted = true;
+    const numWorkers = Math.max(1, Math.min(16, config.numSearchWorkers));
 
-    // Check required working day domain wipeout (arc consistency pre-check)
-    for (const rIdx of model.requiredWorkIndices) {
-        if (model.intervalsCoveringWorkDay[rIdx].length === 0) {
-            return buildOptimizationResult({
-                algorithmId: 'cpsat',
-                selectedPTODates: [],
-                input,
-                calendarDays: model.calendarDays,
-                executionTimeMs: performance.now() - startTime,
-                status: 'infeasible',
-                optimalityGuarantee: 'infeasible',
-                isExactOptimal: false,
-                enableLexicographic: config.enableLexicographic,
-                statusMessage: `CP-SAT propagation proved infeasibility: required working day index ${rIdx} has an empty domain.`,
-                warnings
-            });
+    for (const candidateICTDates of candidateICTSchedules) {
+        const model = buildCPSATModel(input, candidateICTDates);
+        assignCPSATObjectiveWeights(model, input, config.enableLexicographic);
+
+        const M = model.workingDays.length;
+        const B = model.availablePTO;
+
+        // Check required working day domain wipeout (arc consistency pre-check)
+        let domainWipedOut = false;
+        for (const rIdx of model.requiredWorkIndices) {
+            if (model.intervalsCoveringWorkDay[rIdx].length === 0) {
+                domainWipedOut = true;
+                break;
+            }
         }
-    }
+        if (domainWipedOut) continue;
 
-    if (M === 0 || B === 0) {
-        const zeroValid = isAllocationHardValid(model.calendarDays, [], input);
-        return buildOptimizationResult({
-            algorithmId: 'cpsat',
-            selectedPTODates: [],
-            input,
-            calendarDays: model.calendarDays,
-            executionTimeMs: performance.now() - startTime,
-            status: zeroValid ? 'optimal' : 'infeasible',
-            optimalityGuarantee: zeroValid ? 'proven_optimal' : 'infeasible',
-            isExactOptimal: zeroValid,
-            enableLexicographic: config.enableLexicographic,
-            statusMessage: zeroValid
-                ? 'CP-SAT proved optimal solution with 0 PTO days.'
-                : 'CP-SAT proved infeasibility with 0 PTO days.',
-            warnings
-        });
-    }
+        if (M === 0 || B === 0) {
+            if (isAllocationHardValid(model.calendarDays, [], input, candidateICTDates)) {
+                const ev = evaluateCPSATSolution(
+                    model.calendarDays,
+                    [],
+                    input,
+                    config.enableLexicographic,
+                    candidateICTDates
+                );
+                if (
+                    globalBestPTO === null ||
+                    compareEvaluations(ev, globalBestEval, config.enableLexicographic) > 0
+                ) {
+                    globalBestPTO = [];
+                    globalBestICT = candidateICTDates;
+                    globalBestEval = ev;
+                }
+            }
+            continue;
+        }
 
     const timeLimitMs = Math.max(100, config.timeLimitSeconds * 1000);
     const minWorkSpacing = Math.max(1, input.rules.distribution.minWorkingDaysBetweenBreaks);
@@ -162,27 +180,27 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
     }
 
     if (boundTable[0][B] <= NEG_INF / 2) {
-        return buildOptimizationResult({
-            algorithmId: 'cpsat',
-            selectedPTODates: [],
-            input,
-            calendarDays: model.calendarDays,
-            executionTimeMs: performance.now() - startTime,
-            status: 'infeasible',
-            optimalityGuarantee: 'infeasible',
-            isExactOptimal: false,
-            enableLexicographic: config.enableLexicographic,
-            statusMessage: 'CP-SAT constraint propagation proved that the model is unsatisfiable (UNSAT).',
-            warnings
-        });
+        continue;
     }
 
     let bestPTO: string[] | null = null;
-    let bestEval = evaluateCPSATSolution(model.calendarDays, [], input, config.enableLexicographic);
+    let bestEval = evaluateCPSATSolution(
+        model.calendarDays,
+        [],
+        input,
+        config.enableLexicographic,
+        candidateICTDates
+    );
 
-    if (isAllocationHardValid(model.calendarDays, [], input)) {
+    if (isAllocationHardValid(model.calendarDays, [], input, candidateICTDates)) {
         bestPTO = [];
-        bestEval = evaluateCPSATSolution(model.calendarDays, [], input, config.enableLexicographic);
+        bestEval = evaluateCPSATSolution(
+            model.calendarDays,
+            [],
+            input,
+            config.enableLexicographic,
+            candidateICTDates
+        );
     }
 
     // Worker 0: Deterministic propagated trajectories for all valid budgets
@@ -218,8 +236,14 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
                 w = nextW;
             }
         }
-        if (isAllocationHardValid(model.calendarDays, dates, input)) {
-            const ev = evaluateCPSATSolution(model.calendarDays, dates, input, config.enableLexicographic);
+        if (isAllocationHardValid(model.calendarDays, dates, input, candidateICTDates)) {
+            const ev = evaluateCPSATSolution(
+                model.calendarDays,
+                dates,
+                input,
+                config.enableLexicographic,
+                candidateICTDates
+            );
             if (bestPTO === null || compareEvaluations(ev, bestEval, config.enableLexicographic) > 0) {
                 bestPTO = dates;
                 bestEval = ev;
@@ -228,7 +252,6 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
     }
 
     // Multi-worker portfolio search (Workers 1..numSearchWorkers)
-    const numWorkers = Math.max(1, Math.min(16, config.numSearchWorkers));
     let totalBranchesExplored = 1;
     let timedOut = false;
     let searchExhausted = false;
@@ -254,7 +277,7 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
                         percent: Math.min(95, 25 + Math.round((totalBranchesExplored / 20000) * 70)),
                         currentIteration: totalBranchesExplored,
                         bestScore: bestPTO !== null ? bestEval.primaryScore : undefined,
-                        statesExplored: totalBranchesExplored
+                        statesExplored: totalBranchesAll + totalBranchesExplored
                     });
                 }
             }
@@ -267,12 +290,13 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
                 for (const id of activeIds) {
                     dates.push(...model.intervalVars[id].interval.ptoDates);
                 }
-                if (isAllocationHardValid(model.calendarDays, dates, input)) {
+                if (isAllocationHardValid(model.calendarDays, dates, input, candidateICTDates)) {
                     const ev = evaluateCPSATSolution(
                         model.calendarDays,
                         dates,
                         input,
-                        config.enableLexicographic
+                        config.enableLexicographic,
+                        candidateICTDates
                     );
                     if (
                         bestPTO === null ||
@@ -413,12 +437,13 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
                 }
             }
 
-            if (isAllocationHardValid(model.calendarDays, chosenDates, input)) {
+            if (isAllocationHardValid(model.calendarDays, chosenDates, input, candidateICTDates)) {
                 const ev = evaluateCPSATSolution(
                     model.calendarDays,
                     chosenDates,
                     input,
-                    config.enableLexicographic
+                    config.enableLexicographic,
+                    candidateICTDates
                 );
                 if (
                     bestPTO === null ||
@@ -431,43 +456,61 @@ export async function solveWithCPSAT(options: SolverOptions<CPSATConfig>): Promi
         }
     }
 
+        totalBranchesAll += totalBranchesExplored;
+        if (timedOut) anyTimedOut = true;
+        if (!searchExhausted) allSearchExhausted = false;
+
+        if (bestPTO !== null) {
+            if (
+                globalBestPTO === null ||
+                compareEvaluations(bestEval, globalBestEval, config.enableLexicographic) > 0
+            ) {
+                globalBestPTO = bestPTO;
+                globalBestICT = candidateICTDates;
+                globalBestEval = bestEval;
+            }
+        }
+    }
+
     const elapsed = performance.now() - startTime;
 
-    if (bestPTO === null) {
+    if (globalBestPTO === null) {
         return buildOptimizationResult({
             algorithmId: 'cpsat',
             selectedPTODates: [],
+            selectedICTDates: [],
             input,
-            calendarDays: model.calendarDays,
+            calendarDays: baseCalendarDays,
             executionTimeMs: elapsed,
-            status: timedOut ? 'timeout' : 'infeasible',
-            optimalityGuarantee: timedOut ? 'none' : 'infeasible',
+            status: anyTimedOut ? 'timeout' : 'infeasible',
+            optimalityGuarantee: anyTimedOut ? 'none' : 'infeasible',
             isExactOptimal: false,
             enableLexicographic: config.enableLexicographic,
-            statusMessage: timedOut
+            statusMessage: anyTimedOut
                 ? 'CP-SAT solver timed out before finding a feasible assignment.'
                 : 'CP-SAT proved the constraint model is unsatisfiable (INFEASIBLE).',
             warnings,
-            statesExplored: totalBranchesExplored
+            statesExplored: totalBranchesAll
         });
     }
 
-    const isOptimal = !timedOut && searchExhausted;
+    const isOptimal = !anyTimedOut && allSearchExhausted;
 
     return buildOptimizationResult({
         algorithmId: 'cpsat',
-        selectedPTODates: bestPTO,
+        selectedPTODates: globalBestPTO,
+        selectedICTDates: globalBestICT,
         input,
-        calendarDays: model.calendarDays,
+        calendarDays: baseCalendarDays,
         executionTimeMs: elapsed,
         status: isOptimal ? 'optimal' : 'feasible',
         optimalityGuarantee: isOptimal ? 'proven_optimal' : 'feasible_unproven',
         isExactOptimal: isOptimal,
         enableLexicographic: config.enableLexicographic,
         statusMessage: isOptimal
-            ? `CP-SAT proven optimal solution using ${numWorkers} search worker(s) (seed ${config.randomSeed}, ${totalBranchesExplored} branches).`
-            : `CP-SAT feasible solution found before timeout (${totalBranchesExplored} branches across ${numWorkers} worker(s)).`,
+            ? `CP-SAT proven optimal solution using ${numWorkers} search worker(s) (seed ${config.randomSeed}, ${totalBranchesAll} branches).`
+            : `CP-SAT feasible solution found before timeout (${totalBranchesAll} branches across ${numWorkers} worker(s)).`,
         warnings,
-        statesExplored: totalBranchesExplored
+        statesExplored: totalBranchesAll
     });
 }

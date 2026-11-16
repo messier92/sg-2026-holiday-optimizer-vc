@@ -27,9 +27,10 @@ export function evaluateILPCandidate(
     calendarDays: CalendarDay[],
     ptoDates: string[],
     input: SharedOptimizationInput,
-    enableLexicographic: boolean
+    enableLexicographic: boolean,
+    selectedICTDates: string[] = []
 ): ObjectiveEvaluation {
-    return evaluateObjective(calendarDays, ptoDates, input, enableLexicographic);
+    return evaluateObjective(calendarDays, ptoDates, input, enableLexicographic, selectedICTDates);
 }
 
 export { compareEvaluations };

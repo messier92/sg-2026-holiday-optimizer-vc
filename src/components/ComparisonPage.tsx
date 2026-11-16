@@ -218,7 +218,9 @@ export function ComparisonPage() {
                                     })}
                                 </tr>
                                 <tr>
-                                    <td className="py-2.5 px-4 font-semibold">Total days off</td>
+                                    <td className="py-2.5 px-4 font-semibold">
+                                        Total calendar days away from work
+                                    </td>
                                     {selectedAlgorithmIds.map(id => {
                                         const r = !isResultStale(id) ? results[id] : undefined;
                                         return (
@@ -237,14 +239,64 @@ export function ComparisonPage() {
                                         return (
                                             <td key={id} className="py-2.5 px-4">
                                                 {r
-                                                    ? `${r.totalPTOConsumed} / ${r.availablePTOAllowance} (${r.remainingPTOAllowance} rem)`
+                                                    ? `${r.totalPTOConsumed} / ${r.availablePTOAllowance}`
                                                     : '—'}
                                             </td>
                                         );
                                     })}
                                 </tr>
                                 <tr>
-                                    <td className="py-2.5 px-4 font-semibold">Number of breaks</td>
+                                    <td className="py-2.5 px-4 font-semibold">Remaining PTO</td>
+                                    {selectedAlgorithmIds.map(id => {
+                                        const r = !isResultStale(id) ? results[id] : undefined;
+                                        return (
+                                            <td key={id} className="py-2.5 px-4">
+                                                {r ? `${r.remainingPTOAllowance} days` : '—'}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                                <tr>
+                                    <td className="py-2.5 px-4 font-semibold">ICT consumed</td>
+                                    {selectedAlgorithmIds.map(id => {
+                                        const r = !isResultStale(id) ? results[id] : undefined;
+                                        return (
+                                            <td key={id} className="py-2.5 px-4 text-cyan-600 dark:text-cyan-400 font-semibold">
+                                                {r
+                                                    ? `${r.totalICTConsumed} / ${r.availableICTAllowance} cal days`
+                                                    : '—'}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                                <tr>
+                                    <td className="py-2.5 px-4 font-semibold">Remaining ICT</td>
+                                    {selectedAlgorithmIds.map(id => {
+                                        const r = !isResultStale(id) ? results[id] : undefined;
+                                        return (
+                                            <td key={id} className="py-2.5 px-4">
+                                                {r ? `${r.remainingICTAllowance} cal days` : '—'}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                                <tr>
+                                    <td className="py-2.5 px-4 font-semibold">
+                                        Number of ICT periods
+                                    </td>
+                                    {selectedAlgorithmIds.map(id => {
+                                        const r = !isResultStale(id) ? results[id] : undefined;
+                                        return (
+                                            <td key={id} className="py-2.5 px-4">
+                                                {r ? r.numberOfICTPeriods : '—'}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                                <tr>
+                                    <td className="py-2.5 px-4 font-semibold">
+                                        Number of qualifying breaks
+                                    </td>
                                     {selectedAlgorithmIds.map(id => {
                                         const r = !isResultStale(id) ? results[id] : undefined;
                                         return (
@@ -257,7 +309,22 @@ export function ComparisonPage() {
                                     })}
                                 </tr>
                                 <tr>
-                                    <td className="py-2.5 px-4 font-semibold">Extended breaks</td>
+                                    <td className="py-2.5 px-4 font-semibold">
+                                        Longest continuous break
+                                    </td>
+                                    {selectedAlgorithmIds.map(id => {
+                                        const r = !isResultStale(id) ? results[id] : undefined;
+                                        return (
+                                            <td key={id} className="py-2.5 px-4 font-semibold">
+                                                {r ? `${r.longestContinuousBreak} cal days` : '—'}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                                <tr>
+                                    <td className="py-2.5 px-4 font-semibold">
+                                        Number of extended breaks
+                                    </td>
                                     {selectedAlgorithmIds.map(id => {
                                         const r = !isResultStale(id) ? results[id] : undefined;
                                         return (
@@ -289,6 +356,17 @@ export function ComparisonPage() {
                                         return (
                                             <td key={id} className="py-2.5 px-4 font-semibold">
                                                 {r ? `${r.ptoEfficiency.toFixed(2)}x` : '—'}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                                <tr>
+                                    <td className="py-2.5 px-4 font-semibold">ICT utilization</td>
+                                    {selectedAlgorithmIds.map(id => {
+                                        const r = !isResultStale(id) ? results[id] : undefined;
+                                        return (
+                                            <td key={id} className="py-2.5 px-4 font-semibold text-cyan-600 dark:text-cyan-400">
+                                                {r ? `${r.ictUtilization.toFixed(1)}%` : '—'}
                                             </td>
                                         );
                                     })}
@@ -401,6 +479,12 @@ export function ComparisonPage() {
                             startDate={startDate}
                             endDate={endDate}
                             ptoDates={activeCalResult?.selectedPTODates ?? []}
+                            ictDates={activeCalResult?.selectedICTDates ?? []}
+                            availableICTQuota={
+                                rules.ict?.enabled
+                                    ? Math.max(0, rules.ict.annualICTQuota - rules.ict.reserveICTDays)
+                                    : undefined
+                            }
                             continuousBreakDates={
                                 new Set(activeCalResult?.continuousBreakDates ?? [])
                             }

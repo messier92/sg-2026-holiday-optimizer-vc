@@ -18,9 +18,11 @@ export interface Chromosome {
 export interface GARunContext {
     calendarDays: CalendarDay[];
     workingDays: CalendarDay[];
+    selectedICTDates: string[];
+    selectedICTSet: ReadonlySet<string>;
     allowedMask: Uint8Array; // 1 if working day i is allowed for PTO
     requiredMask: Uint8Array; // 1 if working day i is required PTO
-    bridgePriorityIndices: number[]; // working day indices adjacent to holidays/weekends
+    bridgePriorityIndices: number[]; // working day indices adjacent to holidays/weekends/ICT
     availablePTO: number;
     minPTORequired: number;
     input: SharedOptimizationInput;

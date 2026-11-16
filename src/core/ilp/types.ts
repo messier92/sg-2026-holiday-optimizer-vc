@@ -11,6 +11,9 @@ export interface ILPLinearConstraint {
 export interface ILPModel {
     calendarDays: CalendarDay[];
     workingDays: CalendarDay[];
+    selectedICTDates: string[];
+    availableICT: number;
+    minICTRequired: number;
     intervals: CandidateBreakInterval[];
     intervalsByStart: CandidateBreakInterval[][];
     availablePTO: number;

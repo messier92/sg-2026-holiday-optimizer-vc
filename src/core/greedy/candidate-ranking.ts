@@ -12,14 +12,21 @@ export function isPartialAllocationFeasible(
     calendarDays: CalendarDay[],
     candidatePTOSet: ReadonlySet<string>,
     input: SharedOptimizationInput,
-    availablePTO: number
+    availablePTO: number,
+    currentICTSet?: ReadonlySet<string>
 ): boolean {
     if (candidatePTOSet.size > availablePTO) return false;
+
+    if (currentICTSet) {
+        for (const d of candidatePTOSet) {
+            if (currentICTSet.has(d)) return false;
+        }
+    }
 
     const { rules } = input;
     if (rules.allocation.maxConsecutivePTOWorkingDays !== null) {
         if (
-            getMaxConsecutivePTORun(calendarDays, candidatePTOSet) >
+            getMaxConsecutivePTORun(calendarDays, candidatePTOSet, currentICTSet) >
             rules.allocation.maxConsecutivePTOWorkingDays
         ) {
             return false;
@@ -29,7 +36,8 @@ export function isPartialAllocationFeasible(
     const { activeBreaks, qualifyingBreaks, categoryCounts } = analyzeBreaks(
         calendarDays,
         candidatePTOSet,
-        rules.breakDuration
+        rules.breakDuration,
+        currentICTSet
     );
 
     const spacings = computeBreakSpacings(activeBreaks, calendarDays);
@@ -73,16 +81,24 @@ export function generateAndEvaluateGreedyCandidates(
     currentPTOSet: ReadonlySet<string>,
     remainingPTO: number,
     input: SharedOptimizationInput,
-    availablePTO: number
+    availablePTO: number,
+    currentICTSet?: ReadonlySet<string>
 ): GreedyCandidateOpportunity[] {
     if (remainingPTO <= 0) return [];
 
     const { rules } = input;
-    const workingDays = calendarDays.filter(d => d.isEligibleWorkingDay);
+    const workingDays = calendarDays.filter(
+        d => d.isEligibleWorkingDay && !(currentICTSet && currentICTSet.has(d.date))
+    );
     const M = workingDays.length;
 
-    const baseAnalysis = analyzeBreaks(calendarDays, currentPTOSet, rules.breakDuration);
-    const baseEval = evaluateObjective(calendarDays, currentPTOSet, input, true);
+    const baseAnalysis = analyzeBreaks(
+        calendarDays,
+        currentPTOSet,
+        rules.breakDuration,
+        currentICTSet
+    );
+    const baseEval = evaluateObjective(calendarDays, currentPTOSet, input, true, currentICTSet);
 
     // Check if any minimum break count or category count is currently unsatisfied
     const needsQualifyingBreaks =
@@ -101,7 +117,7 @@ export function generateAndEvaluateGreedyCandidates(
     // 1. Single working day opportunities
     for (let i = 0; i < M; i++) {
         const w = workingDays[i];
-        if (currentPTOSet.has(w.date) || !isWorkingDayAllowedForPTO(w, rules)) continue;
+        if (currentPTOSet.has(w.date) || !isWorkingDayAllowedForPTO(w, rules, currentICTSet)) continue;
         const kind: GreedyCandidateOpportunity['kind'] =
             w.isAdjacentToHoliday && w.isAdjacentToWeekend
                 ? 'holiday_bridge'
@@ -120,11 +136,11 @@ export function generateAndEvaluateGreedyCandidates(
         10
     );
     for (let a = 0; a < M; a++) {
-        if (!isWorkingDayAllowedForPTO(workingDays[a], rules)) continue;
+        if (!isWorkingDayAllowedForPTO(workingDays[a], rules, currentICTSet)) continue;
         const newDates: string[] = [];
         for (let b = a; b < Math.min(M, a + maxCluster); b++) {
             const w = workingDays[b];
-            if (!isWorkingDayAllowedForPTO(w, rules)) break;
+            if (!isWorkingDayAllowedForPTO(w, rules, currentICTSet)) break;
             if (!currentPTOSet.has(w.date)) {
                 newDates.push(w.date);
             }
@@ -149,12 +165,25 @@ export function generateAndEvaluateGreedyCandidates(
         const nextSet = new Set(currentPTOSet);
         for (const d of group.dates) nextSet.add(d);
 
-        if (!isPartialAllocationFeasible(calendarDays, nextSet, input, availablePTO)) {
+        if (
+            !isPartialAllocationFeasible(
+                calendarDays,
+                nextSet,
+                input,
+                availablePTO,
+                currentICTSet
+            )
+        ) {
             continue;
         }
 
-        const nextAnalysis = analyzeBreaks(calendarDays, nextSet, rules.breakDuration);
-        const nextEval = evaluateObjective(calendarDays, nextSet, input, true);
+        const nextAnalysis = analyzeBreaks(
+            calendarDays,
+            nextSet,
+            rules.breakDuration,
+            currentICTSet
+        );
+        const nextEval = evaluateObjective(calendarDays, nextSet, input, true, currentICTSet);
 
         const deltaCalendarDaysOff =
             nextEval.totalCalendarDaysOff - baseEval.totalCalendarDaysOff;

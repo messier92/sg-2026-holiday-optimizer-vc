@@ -31,7 +31,7 @@ export type AppRoute =
     | '/algorithms/genetic'
     | '/algorithms/compare';
 
-const STORAGE_KEY = 'sg_ph_optimizer_2027_state_v4';
+const STORAGE_KEY = 'sg_ph_optimizer_2027_state_v5';
 
 interface PersistedState {
     startDate: string;
@@ -164,6 +164,7 @@ export function OptimizationProvider({ children }: { children: ReactNode }) {
         if (!saved?.rules) return defaults;
         return {
             allocation: { ...defaults.allocation, ...saved.rules.allocation },
+            ict: { ...defaults.ict, ...(saved.rules.ict ?? {}) },
             breakDuration: { ...defaults.breakDuration, ...saved.rules.breakDuration },
             distribution: { ...defaults.distribution, ...saved.rules.distribution },
             restrictions: { ...defaults.restrictions, ...saved.rules.restrictions },

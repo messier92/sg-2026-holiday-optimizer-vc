@@ -1,4 +1,4 @@
-import { analyzeBreaks, buildCalendarDays } from '../calendar/index.ts';
+import { analyzeBreaks, buildCalendarDays, extractICTPeriods } from '../calendar/index.ts';
 import { evaluateObjective } from '../objectives/index.ts';
 import {
     ALGORITHM_METADATA,
@@ -15,6 +15,7 @@ import { validateAllocation } from '../validation/index.ts';
 export interface BuildResultParams {
     algorithmId: AlgorithmId;
     selectedPTODates: string[];
+    selectedICTDates?: string[];
     input: SharedOptimizationInput;
     calendarDays?: CalendarDay[];
     executionTimeMs: number;
@@ -49,16 +50,24 @@ export function buildOptimizationResult(params: BuildResultParams): Optimization
     const meta = ALGORITHM_METADATA[algorithmId];
     const days =
         params.calendarDays ??
-        buildCalendarDays(input.startDate, input.endDate, input.publicHolidays, input.rules.restrictions);
+        buildCalendarDays(
+            input.startDate,
+            input.endDate,
+            input.publicHolidays,
+            input.rules.restrictions,
+            input.rules.ict
+        );
 
     const uniqueSortedPTO = Array.from(new Set(params.selectedPTODates)).sort();
-    const validation = validateAllocation(uniqueSortedPTO, input, days);
+    const uniqueSortedICT = Array.from(new Set(params.selectedICTDates ?? [])).sort();
+    const validation = validateAllocation(uniqueSortedPTO, input, days, uniqueSortedICT);
 
     let finalStatus = params.status;
     let finalGuarantee = params.optimalityGuarantee;
     let finalExact = params.isExactOptimal;
     let finalMessage = params.statusMessage;
     let finalPTO = uniqueSortedPTO;
+    let finalICT = uniqueSortedICT;
 
     // Never allow a solution violating hard constraints to be presented as optimal or feasible
     if (!validation.isValid && (finalStatus === 'optimal' || finalStatus === 'feasible')) {
@@ -71,6 +80,7 @@ export function buildOptimizationResult(params: BuildResultParams): Optimization
             .join(' ');
         finalMessage = `Infeasible configuration: ${failedMsgs}`;
         finalPTO = [];
+        finalICT = [];
     }
 
     // Never report exact optimality for heuristic algorithms or unproven statuses
@@ -82,19 +92,37 @@ export function buildOptimizationResult(params: BuildResultParams): Optimization
     const totalPTOConsumed = finalPTO.length;
     const remainingPTOAllowance = Math.max(0, availablePTO - totalPTOConsumed);
 
+    const ictRules = input.rules.ict;
+    const ictEnabled = !!ictRules?.enabled;
+    const annualICTAllowance = ictEnabled ? ictRules.annualICTQuota : 0;
+    const reservedICTDays = ictEnabled ? ictRules.reserveICTDays : 0;
+    const availableICTAllowance = ictEnabled
+        ? Math.max(0, annualICTAllowance - reservedICTDays)
+        : 0;
+    const totalICTConsumed = finalICT.length;
+    const remainingICTAllowance = Math.max(0, availableICTAllowance - totalICTConsumed);
+    const ictUtilization =
+        availableICTAllowance > 0
+            ? Number(((totalICTConsumed / availableICTAllowance) * 100).toFixed(1))
+            : 0;
+    const ictPeriods = extractICTPeriods(days, finalICT, ictRules?.fixedICTPeriods ?? []);
+
     const { activeBreaks, qualifyingBreaks, categoryCounts, continuousBreakDates } = analyzeBreaks(
         days,
         finalPTO,
-        input.rules.breakDuration
+        input.rules.breakDuration,
+        finalICT
     );
 
     const ptoSet = new Set(finalPTO);
+    const ictSet = new Set(finalICT);
     const totalNonWorkingCalendarDays = days.filter(
-        d => d.isFixedOff || (d.isEligibleWorkingDay && ptoSet.has(d.date))
+        d => d.isFixedOff || ictSet.has(d.date) || (d.isEligibleWorkingDay && ptoSet.has(d.date))
     ).length;
 
-    const evalScores = evaluateObjective(days, finalPTO, input, enableLexicographic);
+    const evalScores = evaluateObjective(days, finalPTO, input, enableLexicographic, finalICT);
     const totalCalendarDaysOff = evalScores.totalCalendarDaysOff;
+    const longestContinuousBreak = activeBreaks.reduce((m, b) => Math.max(m, b.duration), 0);
     const ptoEfficiency =
         totalPTOConsumed > 0 ? Number((totalCalendarDaysOff / totalPTOConsumed).toFixed(2)) : 0;
 
@@ -106,9 +134,20 @@ export function buildOptimizationResult(params: BuildResultParams): Optimization
         availablePTOAllowance: availablePTO,
         remainingPTOAllowance,
         reservedPTODays: input.rules.allocation.reservePTODays,
+        ictEnabled,
+        selectedICTDates: finalICT,
+        ictPeriods,
+        numberOfICTPeriods: ictPeriods.length,
+        annualICTAllowance,
+        availableICTAllowance,
+        reservedICTDays,
+        totalICTConsumed,
+        remainingICTAllowance,
+        ictUtilization,
         totalCalendarDaysOff,
         totalNonWorkingCalendarDays,
         numberOfQualifyingBreaks: qualifyingBreaks.length,
+        longestContinuousBreak,
         breaks: activeBreaks,
         qualifyingBreaks,
         continuousBreakDates,

@@ -129,22 +129,22 @@ export function ResultSummaryPanel({
             )}
 
             {/* Optimization Statistics Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 <div className="p-3.5 rounded-xl bg-white/60 dark:bg-black/25 border border-white/15">
                     <span className="text-[11px] text-muted-foreground block">
-                        Total Calendar Days Off (Breaks)
+                        Total Days Away from Work
                     </span>
                     <span className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
                         {result.totalCalendarDaysOff}
                     </span>
                     <span className="text-[10px] text-muted-foreground block">
-                        {result.totalNonWorkingCalendarDays} total non-working days in range
+                        Longest break: {result.longestContinuousBreak}d • {result.totalNonWorkingCalendarDays} non-working
                     </span>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-white/60 dark:bg-black/25 border border-white/15">
                     <span className="text-[11px] text-muted-foreground block">
-                        PTO Consumed / Remaining
+                        PTO Consumed / Allowance
                     </span>
                     <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                         {result.totalPTOConsumed}{' '}
@@ -159,13 +159,28 @@ export function ResultSummaryPanel({
 
                 <div className="p-3.5 rounded-xl bg-white/60 dark:bg-black/25 border border-white/15">
                     <span className="text-[11px] text-muted-foreground block">
-                        Qualifying Breaks
+                        ICT Consumed / Quota
+                    </span>
+                    <span className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">
+                        {result.totalICTConsumed}{' '}
+                        <span className="text-sm font-normal text-muted-foreground">
+                            / {result.availableICTAllowance}
+                        </span>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground block">
+                        {result.remainingICTAllowance} remaining • {result.numberOfICTPeriods} ICT period(s)
+                    </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-white/60 dark:bg-black/25 border border-white/15">
+                    <span className="text-[11px] text-muted-foreground block">
+                        Total Qualifying Breaks
                     </span>
                     <span className="text-2xl font-bold text-purple-600 dark:text-purple-400">
                         {result.numberOfQualifyingBreaks}
                     </span>
                     <span className="text-[10px] text-muted-foreground block">
-                        {result.breaks.length} total active break block(s)
+                        {result.breaks.length} total continuous break(s)
                     </span>
                 </div>
 
@@ -185,17 +200,19 @@ export function ResultSummaryPanel({
                         </span>
                     </div>
                     <span className="text-[10px] text-muted-foreground block mt-1">
-                        Category distribution
+                        Longest continuous break: {result.longestContinuousBreak}d
                     </span>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-white/60 dark:bg-black/25 border border-white/15">
-                    <span className="text-[11px] text-muted-foreground block">PTO Efficiency</span>
+                    <span className="text-[11px] text-muted-foreground block">
+                        PTO Efficiency & ICT Util
+                    </span>
                     <span className="text-2xl font-bold text-pink-600 dark:text-pink-400">
                         {result.ptoEfficiency.toFixed(2)}x
                     </span>
                     <span className="text-[10px] text-muted-foreground block">
-                        Break days off per PTO day
+                        ICT utilization: {result.ictUtilization.toFixed(1)}%
                     </span>
                 </div>
             </div>
@@ -225,14 +242,64 @@ export function ResultSummaryPanel({
                 )}
             </div>
 
-            {/* Break Summary Table */}
+            {/* Separate ICT Allocation Table */}
+            {(result.ictEnabled || result.ictPeriods.length > 0) && (
+                <div className="p-4 rounded-2xl bg-cyan-500/5 border border-cyan-500/25 space-y-3 overflow-x-auto">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-800 dark:text-cyan-300">
+                            ICT Allocation Table ({result.numberOfICTPeriods} period(s) • {result.totalICTConsumed} / {result.availableICTAllowance} calendar days consumed)
+                        </h4>
+                        <span className="text-xs text-muted-foreground">
+                            Remaining ICT Quota: {result.remainingICTAllowance} calendar days
+                        </span>
+                    </div>
+                    {result.ictPeriods.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                            0 ICT periods allocated for this solution.
+                        </p>
+                    ) : (
+                        <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr className="border-b border-cyan-500/20 text-muted-foreground">
+                                    <th className="py-2 px-3 font-semibold">ICT Period</th>
+                                    <th className="py-2 px-3 font-semibold">Start Date</th>
+                                    <th className="py-2 px-3 font-semibold">End Date</th>
+                                    <th className="py-2 px-3 font-semibold text-right">
+                                        Calendar Days
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-cyan-500/10">
+                                {result.ictPeriods.map(p => (
+                                    <tr
+                                        key={p.periodNumber}
+                                        className="hover:bg-cyan-500/5 transition-colors"
+                                    >
+                                        <td className="py-2 px-3 font-bold text-cyan-700 dark:text-cyan-300">
+                                            ICT {p.periodNumber}
+                                            {p.label ? ` (${p.label})` : p.isFixed ? ' (Fixed)' : ''}
+                                        </td>
+                                        <td className="py-2 px-3 font-medium">{p.startDate}</td>
+                                        <td className="py-2 px-3 font-medium">{p.endDate}</td>
+                                        <td className="py-2 px-3 text-right font-semibold text-cyan-700 dark:text-cyan-300">
+                                            {p.duration} days
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+
+            {/* Continuous Break Summary Table (reconciling PTO, ICT, Weekends, and Public Holidays) */}
             <div className="p-4 rounded-2xl bg-white/50 dark:bg-black/20 border border-white/15 space-y-3 overflow-x-auto">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Break Summary ({result.breaks.length} break block(s))
+                    Continuous Break Summary ({result.breaks.length} break block(s))
                 </h4>
                 {result.breaks.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                        No qualifying or PTO-enhanced breaks in this allocation.
+                        No qualifying, PTO-enhanced, or ICT breaks in this allocation.
                     </p>
                 ) : (
                     <table className="w-full text-left border-collapse text-xs">
@@ -240,8 +307,21 @@ export function ResultSummaryPanel({
                             <tr className="border-b border-white/15 text-muted-foreground">
                                 <th className="py-2 px-3 font-semibold">Start Date</th>
                                 <th className="py-2 px-3 font-semibold">End Date</th>
-                                <th className="py-2 px-3 font-semibold text-right">Duration</th>
-                                <th className="py-2 px-3 font-semibold text-right">PTO Used</th>
+                                <th className="py-2 px-3 font-semibold text-right">
+                                    Total Calendar Days
+                                </th>
+                                <th className="py-2 px-3 font-semibold text-right">
+                                    PTO Days Used
+                                </th>
+                                <th className="py-2 px-3 font-semibold text-right">
+                                    ICT Days Used
+                                </th>
+                                <th className="py-2 px-3 font-semibold text-right">
+                                    Weekend Days
+                                </th>
+                                <th className="py-2 px-3 font-semibold text-right">
+                                    Public Holiday Days
+                                </th>
                                 <th className="py-2 px-3 font-semibold">Category</th>
                             </tr>
                         </thead>
@@ -258,6 +338,15 @@ export function ResultSummaryPanel({
                                     </td>
                                     <td className="py-2 px-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
                                         {b.ptoUsed}
+                                    </td>
+                                    <td className="py-2 px-3 text-right font-semibold text-cyan-600 dark:text-cyan-400">
+                                        {b.ictUsed}
+                                    </td>
+                                    <td className="py-2 px-3 text-right text-muted-foreground">
+                                        {b.weekendDays}
+                                    </td>
+                                    <td className="py-2 px-3 text-right text-red-600 dark:text-red-400">
+                                        {b.publicHolidayDays}
                                     </td>
                                     <td className="py-2 px-3">
                                         <span

@@ -12,18 +12,38 @@ import type { ILPLinearConstraint, ILPModel } from './types.ts';
  * Constructs the 0-1 Integer Linear Programming model over eligible working days
  * and candidate break intervals.
  */
-export function buildILPModel(input: SharedOptimizationInput): ILPModel {
+export function buildILPModel(
+    input: SharedOptimizationInput,
+    selectedICTDates: string[] = []
+): ILPModel {
     const { startDate, endDate, ptoAllowance, publicHolidays, rules } = input;
-    const calendarDays = buildCalendarDays(startDate, endDate, publicHolidays, rules.restrictions);
+    const calendarDays = buildCalendarDays(
+        startDate,
+        endDate,
+        publicHolidays,
+        rules.restrictions,
+        rules.ict
+    );
     const availablePTO = Math.max(0, ptoAllowance - rules.allocation.reservePTODays);
     const minPTORequired = rules.allocation.allowUnusedPTO
         ? rules.allocation.minPTOToAllocate
         : availablePTO;
 
+    const ict = rules.ict;
+    const availableICT = ict?.enabled
+        ? Math.max(0, ict.annualICTQuota - ict.reserveICTDays)
+        : 0;
+    const minICTRequired = ict?.enabled
+        ? ict.allowUnusedICTQuota
+            ? ict.minICTDaysToAllocate
+            : availableICT
+        : 0;
+
     const { workingDays, intervals: rawIntervals } = generateCandidateBreakIntervals(
         calendarDays,
         rules,
-        availablePTO
+        availablePTO,
+        selectedICTDates
     );
 
     const requiredWorkingDayIndices = workingDays
@@ -66,8 +86,13 @@ export function buildILPModel(input: SharedOptimizationInput): ILPModel {
         intervalsByStart[iv.workStartIdx].push(iv);
     }
 
-    // Baseline natural qualifying breaks (with 0 PTO allocated)
-    const zeroBreakAnalysis = analyzeBreaks(calendarDays, [], rules.breakDuration);
+    // Baseline natural qualifying breaks (with 0 PTO allocated, accounting for any ICT periods)
+    const zeroBreakAnalysis = analyzeBreaks(
+        calendarDays,
+        [],
+        rules.breakDuration,
+        selectedICTDates
+    );
     const naturalQualifyingCount = zeroBreakAnalysis.qualifyingBreaks.length;
     const naturalCategoryCounts = { ...zeroBreakAnalysis.categoryCounts };
 
@@ -129,6 +154,9 @@ export function buildILPModel(input: SharedOptimizationInput): ILPModel {
     return {
         calendarDays,
         workingDays,
+        selectedICTDates,
+        availableICT,
+        minICTRequired,
         intervals: validIntervals,
         intervalsByStart,
         availablePTO,

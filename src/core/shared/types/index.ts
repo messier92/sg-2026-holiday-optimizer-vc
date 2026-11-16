@@ -20,6 +20,7 @@ export interface CalendarDay {
     workingDayIndex: number; // -1 if fixed off, else 0..M-1
     isBlackout: boolean;
     isRequiredPTO: boolean;
+    isFixedICT?: boolean;
     isAdjacentToHoliday: boolean;
     isAdjacentToWeekend: boolean;
 }
@@ -66,6 +67,7 @@ export interface ProhibitedDateRange {
 }
 
 export type RequiredDateRange = ProhibitedDateRange;
+export type FixedICTPeriod = ProhibitedDateRange;
 
 export interface DateRestrictions {
     blackoutDates: string[];
@@ -74,12 +76,44 @@ export interface DateRestrictions {
     prohibitedDateRanges: ProhibitedDateRange[];
 }
 
+export interface ICTRules {
+    enabled: boolean;
+    annualICTQuota: number; // default 40 calendar days
+    minICTDaysToAllocate: number; // default 0
+    reserveICTDays: number; // default 0
+    allowUnusedICTQuota: boolean; // default true
+    allowMultipleICTPeriods: boolean; // default true
+    minPeriodDuration: number; // default 1 calendar day
+    maxPeriodDuration: number | null; // null = unlimited
+    minNumberOfICTPeriods: number; // default 0
+    maxNumberOfICTPeriods: number | null; // null = unlimited
+    minCalendarDaysBetweenICTPeriods: number; // default 1 calendar day
+    distributeICTThroughoutYear: boolean; // default false
+    fixedICTPeriods: FixedICTPeriod[];
+}
+
+export interface ICTPeriod {
+    periodNumber: number;
+    startDate: string;
+    endDate: string;
+    startIndex: number;
+    endIndex: number;
+    duration: number; // inclusive calendar days
+    workingDaysCovered: number;
+    weekendDaysCovered: number;
+    publicHolidayDaysCovered: number;
+    isFixed: boolean;
+    label?: string;
+}
+
 export type PrimaryObjective =
     | 'maximize_total_days_off'
     | 'maximize_qualifying_breaks'
     | 'maximize_extended_breaks'
     | 'maximize_pto_efficiency'
+    | 'maximize_ict_utilization'
     | 'maximize_break_distribution'
+    | 'combine_ict_with_pto_and_holidays'
     | 'minimize_pto_consumption';
 
 export type SecondaryObjectiveKey =
@@ -88,7 +122,12 @@ export type SecondaryObjectiveKey =
     | 'prefer_evenly_distributed_breaks'
     | 'minimize_consecutive_pto'
     | 'minimize_unused_pto'
-    | 'maximize_total_days_off';
+    | 'maximize_total_days_off'
+    | 'prefer_combining_ict_with_weekends'
+    | 'prefer_combining_ict_with_holidays'
+    | 'prefer_connecting_ict_with_pto'
+    | 'avoid_concentrating_ict'
+    | 'preserve_pto_for_non_ict';
 
 export interface SecondaryObjectiveConfig {
     enabled: boolean;
@@ -104,6 +143,7 @@ export interface OptimizationObjectives {
 
 export interface SharedOptimizationRules {
     allocation: PTOAllocationRules;
+    ict: ICTRules;
     breakDuration: BreakDurationRules;
     distribution: BreakDistributionRules;
     restrictions: DateRestrictions;
@@ -175,6 +215,8 @@ export interface BreakDetail {
     duration: number; // consecutive calendar days
     ptoDates: string[];
     ptoUsed: number;
+    ictDates: string[];
+    ictUsed: number;
     weekendDays: number;
     publicHolidayDays: number;
     isQualifying: boolean;
@@ -244,9 +286,20 @@ export interface OptimizationResult {
     availablePTOAllowance: number;
     remainingPTOAllowance: number;
     reservedPTODays: number;
+    ictEnabled: boolean;
+    selectedICTDates: string[];
+    ictPeriods: ICTPeriod[];
+    numberOfICTPeriods: number;
+    annualICTAllowance: number;
+    availableICTAllowance: number;
+    reservedICTDays: number;
+    totalICTConsumed: number;
+    remainingICTAllowance: number;
+    ictUtilization: number; // percentage 0..100 of available ICT quota used
     totalCalendarDaysOff: number; // calendar days in continuous breaks
-    totalNonWorkingCalendarDays: number; // all weekends + PH + PTO in range
+    totalNonWorkingCalendarDays: number; // all weekends + PH + PTO + ICT in range
     numberOfQualifyingBreaks: number;
+    longestContinuousBreak: number;
     breaks: BreakDetail[];
     qualifyingBreaks: BreakDetail[];
     continuousBreakDates: string[]; // all calendar dates belonging to active/qualifying breaks
@@ -339,6 +392,24 @@ export const ALGORITHM_METADATA: Record<
     }
 };
 
+export function createDefaultICTRules(): ICTRules {
+    return {
+        enabled: false,
+        annualICTQuota: 40,
+        minICTDaysToAllocate: 0,
+        reserveICTDays: 0,
+        allowUnusedICTQuota: true,
+        allowMultipleICTPeriods: true,
+        minPeriodDuration: 1,
+        maxPeriodDuration: null,
+        minNumberOfICTPeriods: 0,
+        maxNumberOfICTPeriods: null,
+        minCalendarDaysBetweenICTPeriods: 1,
+        distributeICTThroughoutYear: false,
+        fixedICTPeriods: []
+    };
+}
+
 export function createDefaultRules(): SharedOptimizationRules {
     return {
         allocation: {
@@ -349,6 +420,7 @@ export function createDefaultRules(): SharedOptimizationRules {
             allowPTOAdjacentToHolidays: true,
             allowPTOAdjacentToWeekends: true
         },
+        ict: createDefaultICTRules(),
         breakDuration: {
             short: { enabled: false, minDuration: 4, minCount: 0, maxCount: null },
             medium: { enabled: false, minDuration: 7, minCount: 0, maxCount: null },
@@ -377,7 +449,12 @@ export function createDefaultRules(): SharedOptimizationRules {
                 prefer_evenly_distributed_breaks: { enabled: false, weight: 1.0 },
                 minimize_consecutive_pto: { enabled: false, weight: 1.0 },
                 minimize_unused_pto: { enabled: false, weight: 1.0 },
-                maximize_total_days_off: { enabled: false, weight: 1.0 }
+                maximize_total_days_off: { enabled: false, weight: 1.0 },
+                prefer_combining_ict_with_weekends: { enabled: true, weight: 1.0 },
+                prefer_combining_ict_with_holidays: { enabled: true, weight: 1.0 },
+                prefer_connecting_ict_with_pto: { enabled: false, weight: 1.0 },
+                avoid_concentrating_ict: { enabled: false, weight: 1.0 },
+                preserve_pto_for_non_ict: { enabled: false, weight: 1.0 }
             }
         }
     };

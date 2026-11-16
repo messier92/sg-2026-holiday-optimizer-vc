@@ -10,18 +10,38 @@ import type { BoolDomain, CPSATIntervalVar, CPSATModel } from './types.ts';
  * Builds the CP-SAT Boolean & Interval constraint model, including incompatibility graphs
  * for NoOverlapWithSpacing propagation and domain filtering.
  */
-export function buildCPSATModel(input: SharedOptimizationInput): CPSATModel {
+export function buildCPSATModel(
+    input: SharedOptimizationInput,
+    selectedICTDates: string[] = []
+): CPSATModel {
     const { startDate, endDate, ptoAllowance, publicHolidays, rules } = input;
-    const calendarDays = buildCalendarDays(startDate, endDate, publicHolidays, rules.restrictions);
+    const calendarDays = buildCalendarDays(
+        startDate,
+        endDate,
+        publicHolidays,
+        rules.restrictions,
+        rules.ict
+    );
     const availablePTO = Math.max(0, ptoAllowance - rules.allocation.reservePTODays);
     const minPTORequired = rules.allocation.allowUnusedPTO
         ? rules.allocation.minPTOToAllocate
         : availablePTO;
 
+    const ict = rules.ict;
+    const availableICT = ict?.enabled
+        ? Math.max(0, ict.annualICTQuota - ict.reserveICTDays)
+        : 0;
+    const minICTRequired = ict?.enabled
+        ? ict.allowUnusedICTQuota
+            ? ict.minICTDaysToAllocate
+            : availableICT
+        : 0;
+
     const { workingDays, intervals } = generateCandidateBreakIntervals(
         calendarDays,
         rules,
-        availablePTO
+        availablePTO,
+        selectedICTDates
     );
 
     const M = workingDays.length;
@@ -87,6 +107,9 @@ export function buildCPSATModel(input: SharedOptimizationInput): CPSATModel {
     return {
         calendarDays,
         workingDays,
+        selectedICTDates,
+        availableICT,
+        minICTRequired,
         intervalVars,
         intervalsByWorkStart,
         intervalsCoveringWorkDay,

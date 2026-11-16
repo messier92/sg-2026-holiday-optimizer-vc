@@ -3,8 +3,12 @@ import type { CalendarDay, DPConfig, SharedOptimizationInput } from '../shared/t
 export interface DPStateNode {
     dayIndex: number; // 0..N
     remPTO: number;
+    remICT: number;
     curOffDays: number;
     curBreakPTO: number;
+    curBreakICT: number;
+    curICTDuration: number;
+    ictPeriodsUsed: number;
     curConsecPTO: number;
     workCooldown: number; // remaining working days required before next PTO break can start
     calCooldown: number; // remaining calendar days required before next PTO break can start
@@ -17,6 +21,7 @@ export interface DPStateNode {
     totalBreakDaysOff: number;
     parent: DPStateNode | null;
     tookPTOOnPrevDay: boolean;
+    tookICTOnPrevDay: boolean;
 }
 
 export interface DPComplexityEstimate {

@@ -19,12 +19,13 @@ export function getDPStateKey(
             ? state.calCooldown
             : 0;
     const hasPTOInCurBreak = state.curBreakPTO > 0 ? 1 : 0;
+    const hasICTInCurBreak = state.curBreakICT > 0 ? 1 : 0;
 
     if (!trackGlobalCounts) {
-        return `${state.remPTO}|${state.curOffDays}|${hasPTOInCurBreak}|${consecPart}|${state.workCooldown}|${calPart}`;
+        return `${state.remPTO}|${state.remICT}|${state.curOffDays}|${hasPTOInCurBreak}|${hasICTInCurBreak}|${consecPart}|${state.workCooldown}|${calPart}`;
     }
 
-    return `${state.remPTO}|${state.curOffDays}|${hasPTOInCurBreak}|${consecPart}|${state.workCooldown}|${calPart}|${state.qualifyingBreaks}|${state.shortCount},${state.mediumCount},${state.longCount},${state.extendedCount}`;
+    return `${state.remPTO}|${state.remICT}|${state.curOffDays}|${hasPTOInCurBreak}|${hasICTInCurBreak}|${consecPart}|${state.workCooldown}|${calPart}|${state.qualifyingBreaks}|${state.shortCount},${state.mediumCount},${state.longCount},${state.extendedCount}`;
 }
 
 /**
@@ -100,6 +101,29 @@ export function reconstructDPSelectedDates(
 
     while (cur && cur.parent !== null) {
         if (cur.tookPTOOnPrevDay) {
+            const dayIdx = cur.dayIndex - 1;
+            if (dayIdx >= 0 && dayIdx < calendarDates.length) {
+                selected.push(calendarDates[dayIdx]);
+            }
+        }
+        cur = cur.parent;
+    }
+
+    return selected.reverse();
+}
+
+/**
+ * Reconstructs the selected ICT dates by following backpointers from a terminal DPStateNode.
+ */
+export function reconstructDPSelectedICTDates(
+    terminalState: DPStateNode,
+    calendarDates: string[]
+): string[] {
+    const selected: string[] = [];
+    let cur: DPStateNode | null = terminalState;
+
+    while (cur && cur.parent !== null) {
+        if (cur.tookICTOnPrevDay) {
             const dayIdx = cur.dayIndex - 1;
             if (dayIdx >= 0 && dayIdx < calendarDates.length) {
                 selected.push(calendarDates[dayIdx]);

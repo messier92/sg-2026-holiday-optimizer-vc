@@ -1,6 +1,8 @@
 import {
     analyzeBreaks,
     buildCalendarDays,
+    diffCalendarDays,
+    extractICTPeriods,
     getMaxConsecutivePTORun,
     isDateInProhibitedRange
 } from '../calendar/index.ts';
@@ -13,17 +15,21 @@ import type {
 } from '../types/index.ts';
 
 /**
- * Validates a PTO allocation against all hard constraints and soft preferences,
+ * Validates a PTO (and optional ICT) allocation against all hard constraints and soft preferences,
  * returning structured diagnostics for the UI and test suite.
  */
 export function validateAllocation(
     selectedPTODates: string[],
     input: SharedOptimizationInput,
-    calendarDays?: CalendarDay[]
+    calendarDays?: CalendarDay[],
+    selectedICTDates: string[] = []
 ): ConstraintValidationResult {
     const { startDate, endDate, ptoAllowance, publicHolidays, rules } = input;
-    const days = calendarDays ?? buildCalendarDays(startDate, endDate, publicHolidays, rules.restrictions);
+    const days =
+        calendarDays ??
+        buildCalendarDays(startDate, endDate, publicHolidays, rules.restrictions, rules.ict);
     const ptoSet = new Set(selectedPTODates);
+    const ictSet = new Set(selectedICTDates);
 
     const hardConstraints: ConstraintViolation[] = [];
     const softPreferences: ConstraintViolation[] = [];
@@ -175,7 +181,7 @@ export function validateAllocation(
     });
 
     // 9. Maximum consecutive PTO working days
-    const maxConsecRun = getMaxConsecutivePTORun(days, ptoSet);
+    const maxConsecRun = getMaxConsecutivePTORun(days, ptoSet, ictSet);
     const maxConsecLimit = rules.allocation.maxConsecutivePTOWorkingDays;
     const maxConsecSatisfied = maxConsecLimit === null || maxConsecRun <= maxConsecLimit;
     hardConstraints.push({
@@ -211,7 +217,8 @@ export function validateAllocation(
     const { activeBreaks, qualifyingBreaks, categoryCounts } = analyzeBreaks(
         days,
         ptoSet,
-        rules.breakDuration
+        rules.breakDuration,
+        ictSet
     );
     const spacings = computeBreakSpacings(activeBreaks, days);
     const workSpacingViolations = spacings.filter(
@@ -281,6 +288,148 @@ export function validateAllocation(
                 ? `All enabled break category count bounds satisfied (S:${categoryCounts.short}, M:${categoryCounts.medium}, L:${categoryCounts.long}, E:${categoryCounts.extended}).`
                 : `Break category count violation(s): ${categoryViolations.join(', ')}.`
     });
+
+    // 14. ICT Constraints (when ICT is enabled or ICT dates are present)
+    const ict = rules.ict;
+    if (ict?.enabled || ictSet.size > 0) {
+        if (!ict?.enabled) {
+            hardConstraints.push({
+                code: 'ICT_ENABLED_STATE',
+                severity: 'hard',
+                satisfied: ictSet.size === 0,
+                message: 'ICT dates allocated while ICT is disabled.'
+            });
+        } else {
+            const availableICT = Math.max(0, ict.annualICTQuota - ict.reserveICTDays);
+            const ictQuotaValid =
+                ict.reserveICTDays <= ict.annualICTQuota &&
+                ictSet.size <= availableICT &&
+                ictSet.size >= ict.minICTDaysToAllocate &&
+                (ict.allowUnusedICTQuota || ictSet.size === availableICT);
+
+            hardConstraints.push({
+                code: 'ICT_QUOTA_AND_POLICY',
+                severity: 'hard',
+                satisfied: ictQuotaValid,
+                message: ictQuotaValid
+                    ? `ICT consumed (${ictSet.size} calendar days) satisfies quota [min: ${ict.minICTDaysToAllocate}, max: ${availableICT}, unused allowed: ${ict.allowUnusedICTQuota}].`
+                    : `ICT consumed (${ictSet.size} calendar days) violates quota [min: ${ict.minICTDaysToAllocate}, max: ${availableICT}, unused allowed: ${ict.allowUnusedICTQuota}].`
+            });
+
+            // Non-overlap between ICT, PTO, and prohibited ranges, plus fixed ICT coverage
+            const ictOverlapErrors: string[] = [];
+            for (const dStr of ictSet) {
+                if (!dayMap.has(dStr)) {
+                    ictOverlapErrors.push(`${dStr} (outside date range)`);
+                } else if (ptoSet.has(dStr) || allRequiredWorkingDates.has(dStr)) {
+                    ictOverlapErrors.push(`${dStr} (overlaps with PTO)`);
+                } else if (
+                    blackoutSet.has(dStr) ||
+                    isDateInProhibitedRange(dStr, rules.restrictions)
+                ) {
+                    ictOverlapErrors.push(`${dStr} (overlaps with prohibited range)`);
+                }
+            }
+
+            const sortedFixed = [...ict.fixedICTPeriods].sort((a, b) =>
+                a.startDate.localeCompare(b.startDate)
+            );
+            for (let i = 0; i < sortedFixed.length; i++) {
+                const fp = sortedFixed[i];
+                if (!fp.startDate || !fp.endDate || fp.startDate > fp.endDate) {
+                    ictOverlapErrors.push(`Fixed ICT [${fp.startDate}..${fp.endDate}] invalid`);
+                    continue;
+                }
+                if (fp.startDate < startDate || fp.endDate > endDate) {
+                    ictOverlapErrors.push(
+                        `Fixed ICT [${fp.startDate}..${fp.endDate}] outside [${startDate}..${endDate}]`
+                    );
+                    continue;
+                }
+                if (i > 0 && fp.startDate <= sortedFixed[i - 1].endDate) {
+                    ictOverlapErrors.push(
+                        `Fixed ICT periods [${sortedFixed[i - 1].startDate}..${sortedFixed[i - 1].endDate}] and [${fp.startDate}..${fp.endDate}] overlap`
+                    );
+                } else if (i > 0) {
+                    const fGap = diffCalendarDays(sortedFixed[i - 1].endDate, fp.startDate) - 1;
+                    if (fGap < Math.max(1, ict.minCalendarDaysBetweenICTPeriods)) {
+                        ictOverlapErrors.push(
+                            `Fixed ICT spacing ${fGap}d < min ${ict.minCalendarDaysBetweenICTPeriods}d`
+                        );
+                    }
+                }
+                for (const d of days) {
+                    if (d.date >= fp.startDate && d.date <= fp.endDate && !ictSet.has(d.date)) {
+                        ictOverlapErrors.push(`Missing fixed ICT date ${d.date}`);
+                    }
+                }
+            }
+
+            hardConstraints.push({
+                code: 'ICT_NON_OVERLAP_AND_FIXED',
+                severity: 'hard',
+                satisfied: ictOverlapErrors.length === 0,
+                message:
+                    ictOverlapErrors.length === 0
+                        ? 'ICT dates do not overlap with PTO or prohibited dates, and all fixed ICT periods are respected.'
+                        : `ICT conflict/fixed period violation(s): ${ictOverlapErrors.slice(0, 5).join('; ')}.`
+            });
+
+            // ICT period duration, count, and spacing bounds
+            const ictPeriods = extractICTPeriods(days, ictSet, ict.fixedICTPeriods);
+            const periodErrors: string[] = [];
+            if (ictPeriods.length < ict.minNumberOfICTPeriods) {
+                periodErrors.push(
+                    `ICT period count (${ictPeriods.length}) < min (${ict.minNumberOfICTPeriods})`
+                );
+            }
+            if (!ict.allowMultipleICTPeriods && ictPeriods.length > 1) {
+                periodErrors.push(
+                    `Multiple ICT periods disabled, but ${ictPeriods.length} periods allocated`
+                );
+            }
+            if (
+                ict.maxNumberOfICTPeriods !== null &&
+                ictPeriods.length > ict.maxNumberOfICTPeriods
+            ) {
+                periodErrors.push(
+                    `ICT period count (${ictPeriods.length}) > max (${ict.maxNumberOfICTPeriods})`
+                );
+            }
+            const minPLen = Math.max(1, ict.minPeriodDuration);
+            for (const p of ictPeriods) {
+                if (p.duration < minPLen) {
+                    periodErrors.push(
+                        `ICT period [${p.startDate}..${p.endDate}] (${p.duration}d) < min duration (${minPLen}d)`
+                    );
+                }
+                if (ict.maxPeriodDuration !== null && p.duration > ict.maxPeriodDuration) {
+                    periodErrors.push(
+                        `ICT period [${p.startDate}..${p.endDate}] (${p.duration}d) > max duration (${ict.maxPeriodDuration}d)`
+                    );
+                }
+            }
+            const minICTSpacing = Math.max(1, ict.minCalendarDaysBetweenICTPeriods);
+            for (let i = 0; i < ictPeriods.length - 1; i++) {
+                const gap = ictPeriods[i + 1].startIndex - ictPeriods[i].endIndex - 1;
+                if (gap < minICTSpacing) {
+                    periodErrors.push(
+                        `ICT spacing between [${ictPeriods[i].startDate}..${ictPeriods[i].endDate}] and [${ictPeriods[i + 1].startDate}..${ictPeriods[i + 1].endDate}] (${gap}d) < min (${minICTSpacing}d)`
+                    );
+                }
+            }
+
+            hardConstraints.push({
+                code: 'ICT_PERIOD_BOUNDS_AND_SPACING',
+                severity: 'hard',
+                satisfied: periodErrors.length === 0,
+                message:
+                    periodErrors.length === 0
+                        ? `All ${ictPeriods.length} ICT period(s) satisfy duration, count, and spacing bounds.`
+                        : `ICT period constraint violation(s): ${periodErrors.join('; ')}.`
+            });
+        }
+    }
 
     // Soft Preferences
     if (

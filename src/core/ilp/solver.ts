@@ -1,3 +1,4 @@
+import { buildCalendarDays, generateCandidateICTSchedules } from '../shared/calendar/index.ts';
 import { areIntervalsCompatible, checkUpfrontFeasibility, isAllocationHardValid } from '../shared/constraints/index.ts';
 import { buildOptimizationResult } from '../shared/results/index.ts';
 import type { ILPConfig, OptimizationResult, SolverOptions } from '../shared/types/index.ts';
@@ -37,31 +38,57 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
         });
     }
 
-    const model = buildILPModel(input);
-    populateILPObjectiveCoeffs(model, input, config.enableLexicographic);
+    const baseCalendarDays = buildCalendarDays(
+        input.startDate,
+        input.endDate,
+        input.publicHolidays,
+        input.rules.restrictions,
+        input.rules.ict
+    );
+    const candidateICTSchedules = generateCandidateICTSchedules(baseCalendarDays, input);
 
-    const M = model.workingDays.length;
-    const B = model.availablePTO;
+    let globalBestPTO: string[] | null = null;
+    let globalBestICT: string[] = [];
+    let globalBestEval = evaluateILPCandidate(
+        baseCalendarDays,
+        [],
+        input,
+        config.enableLexicographic,
+        []
+    );
+    let totalNodesExplored = 0;
+    let anyTimedOut = false;
+    let anyStoppedByGap = false;
+    let bestRootUpperBound = -1e15;
 
-    // Handle zero working days or zero available PTO immediately
-    if (M === 0 || B === 0) {
-        const zeroValid = isAllocationHardValid(model.calendarDays, [], input);
-        return buildOptimizationResult({
-            algorithmId: 'ilp',
-            selectedPTODates: [],
-            input,
-            calendarDays: model.calendarDays,
-            executionTimeMs: performance.now() - startTime,
-            status: zeroValid ? 'optimal' : 'infeasible',
-            optimalityGuarantee: zeroValid ? 'proven_optimal' : 'infeasible',
-            isExactOptimal: zeroValid,
-            enableLexicographic: config.enableLexicographic,
-            statusMessage: zeroValid
-                ? 'Proven globally optimal solution (0 PTO days available/allocated).'
-                : 'Infeasible: constraints cannot be satisfied with 0 PTO.',
-            warnings
-        });
-    }
+    for (const candidateICTDates of candidateICTSchedules) {
+        const model = buildILPModel(input, candidateICTDates);
+        populateILPObjectiveCoeffs(model, input, config.enableLexicographic);
+
+        const M = model.workingDays.length;
+        const B = model.availablePTO;
+
+        // Handle zero working days or zero available PTO
+        if (M === 0 || B === 0) {
+            if (isAllocationHardValid(model.calendarDays, [], input, candidateICTDates)) {
+                const ev = evaluateILPCandidate(
+                    model.calendarDays,
+                    [],
+                    input,
+                    config.enableLexicographic,
+                    candidateICTDates
+                );
+                if (
+                    globalBestPTO === null ||
+                    compareEvaluations(ev, globalBestEval, config.enableLexicographic) > 0
+                ) {
+                    globalBestPTO = [];
+                    globalBestICT = candidateICTDates;
+                    globalBestEval = ev;
+                }
+            }
+            continue;
+        }
 
     const timeLimitMs = Math.max(100, config.timeLimitSeconds * 1000);
     const minWorkSpacing = Math.max(1, input.rules.distribution.minWorkingDaysBetweenBreaks);
@@ -158,31 +185,35 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
         });
     }
 
-    // If even the relaxation at (0, B) is NEG_INF, the mandatory/spacing/budget constraints are infeasible
+    if (U[0][B] > bestRootUpperBound) {
+        bestRootUpperBound = U[0][B];
+    }
+
+    // If even the relaxation at (0, B) is NEG_INF, this ICT schedule cannot satisfy mandatory/spacing/budget constraints
     if (U[0][B] <= NEG_INF / 2) {
-        return buildOptimizationResult({
-            algorithmId: 'ilp',
-            selectedPTODates: [],
-            input,
-            calendarDays: model.calendarDays,
-            executionTimeMs: performance.now() - startTime,
-            status: 'infeasible',
-            optimalityGuarantee: 'infeasible',
-            isExactOptimal: false,
-            enableLexicographic: config.enableLexicographic,
-            statusMessage: 'ILP relaxation proved the problem is infeasible under the current constraints.',
-            warnings
-        });
+        continue;
     }
 
     // Reconstruct the primary relaxation path solution and check if it already satisfies all global constraints
     let bestPTO: string[] | null = null;
-    let bestEval = evaluateILPCandidate(model.calendarDays, [], input, config.enableLexicographic);
+    let bestEval = evaluateILPCandidate(
+        model.calendarDays,
+        [],
+        input,
+        config.enableLexicographic,
+        candidateICTDates
+    );
 
     // Check 0-PTO solution first if allowed
-    if (isAllocationHardValid(model.calendarDays, [], input)) {
+    if (isAllocationHardValid(model.calendarDays, [], input, candidateICTDates)) {
         bestPTO = [];
-        bestEval = evaluateILPCandidate(model.calendarDays, [], input, config.enableLexicographic);
+        bestEval = evaluateILPCandidate(
+            model.calendarDays,
+            [],
+            input,
+            config.enableLexicographic,
+            candidateICTDates
+        );
     }
 
     // Reconstruct path from choiceInterval table for every valid starting budget p <= B
@@ -216,8 +247,14 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
                 w = nextW;
             }
         }
-        if (isAllocationHardValid(model.calendarDays, dates, input)) {
-            const ev = evaluateILPCandidate(model.calendarDays, dates, input, config.enableLexicographic);
+        if (isAllocationHardValid(model.calendarDays, dates, input, candidateICTDates)) {
+            const ev = evaluateILPCandidate(
+                model.calendarDays,
+                dates,
+                input,
+                config.enableLexicographic,
+                candidateICTDates
+            );
             if (bestPTO === null || compareEvaluations(ev, bestEval, config.enableLexicographic) > 0) {
                 bestPTO = dates;
                 bestEval = ev;
@@ -245,7 +282,6 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
     let nodesExplored = 1;
     let timedOut = false;
     let stoppedByGap = false;
-    const rootUpperBound = U[0][B];
 
     // Run Branch-and-Bound whenever needed or when small/medium range or constraints require search
     if (bestPTO === null || hasGlobalCountConstraints || isNonAdditivePrimary || M <= 80) {
@@ -306,12 +342,13 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
                     dates.push(...model.intervals[id].ptoDates);
                 }
 
-                if (isAllocationHardValid(model.calendarDays, dates, input)) {
+                if (isAllocationHardValid(model.calendarDays, dates, input, candidateICTDates)) {
                     const ev = evaluateILPCandidate(
                         model.calendarDays,
                         dates,
                         input,
-                        config.enableLexicographic
+                        config.enableLexicographic,
+                        candidateICTDates
                     );
                     if (
                         bestPTO === null ||
@@ -379,7 +416,7 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
 
             // Branch: do not start a break at w (only allowed if w is not a required PTO day)
             if (isRequiredWorkDay[w] === 0 && !timedOut && !stoppedByGap) {
-                if (nodesExplored <= 25000 || bestPTO === null) {
+                if (nodesExplored <= 25000 || bestPTO !== null) {
                     await dfs(w + 1, remPTO, currentLinearObj);
                 }
             }
@@ -388,51 +425,69 @@ export async function solveWithILP(options: SolverOptions<ILPConfig>): Promise<O
         await dfs(0, B, 0);
     }
 
+        totalNodesExplored += nodesExplored;
+        if (timedOut) anyTimedOut = true;
+        if (stoppedByGap) anyStoppedByGap = true;
+
+        if (bestPTO !== null) {
+            if (
+                globalBestPTO === null ||
+                compareEvaluations(bestEval, globalBestEval, config.enableLexicographic) > 0
+            ) {
+                globalBestPTO = bestPTO;
+                globalBestICT = candidateICTDates;
+                globalBestEval = bestEval;
+            }
+        }
+    }
+
     const elapsed = performance.now() - startTime;
 
-    if (bestPTO === null) {
+    if (globalBestPTO === null) {
         return buildOptimizationResult({
             algorithmId: 'ilp',
             selectedPTODates: [],
+            selectedICTDates: [],
             input,
-            calendarDays: model.calendarDays,
+            calendarDays: baseCalendarDays,
             executionTimeMs: elapsed,
-            status: timedOut ? 'timeout' : 'infeasible',
-            optimalityGuarantee: timedOut ? 'none' : 'infeasible',
+            status: anyTimedOut ? 'timeout' : 'infeasible',
+            optimalityGuarantee: anyTimedOut ? 'none' : 'infeasible',
             isExactOptimal: false,
             enableLexicographic: config.enableLexicographic,
-            statusMessage: timedOut
+            statusMessage: anyTimedOut
                 ? 'ILP solver timed out before finding a feasible solution.'
                 : 'ILP branch-and-bound proved that no valid allocation satisfies all hard constraints.',
             warnings,
-            statesExplored: nodesExplored
+            statesExplored: totalNodesExplored
         });
     }
 
-    const isProvenOptimal = !timedOut && !stoppedByGap && config.optimalityGapTolerance === 0;
-    const status = timedOut && !bestPTO ? 'timeout' : isProvenOptimal ? 'optimal' : 'feasible';
+    const isProvenOptimal = !anyTimedOut && !anyStoppedByGap && config.optimalityGapTolerance === 0;
+    const status = anyTimedOut && !globalBestPTO ? 'timeout' : isProvenOptimal ? 'optimal' : 'feasible';
     const guarantee = isProvenOptimal
         ? 'proven_optimal'
-        : stoppedByGap || config.optimalityGapTolerance > 0
+        : anyStoppedByGap || config.optimalityGapTolerance > 0
           ? 'feasible_within_gap'
           : 'feasible_unproven';
 
     return buildOptimizationResult({
         algorithmId: 'ilp',
-        selectedPTODates: bestPTO,
+        selectedPTODates: globalBestPTO,
+        selectedICTDates: globalBestICT,
         input,
-        calendarDays: model.calendarDays,
+        calendarDays: baseCalendarDays,
         executionTimeMs: elapsed,
         status,
         optimalityGuarantee: guarantee,
         isExactOptimal: isProvenOptimal,
         enableLexicographic: config.enableLexicographic,
         statusMessage: isProvenOptimal
-            ? `Proven globally optimal solution (${nodesExplored} branch-and-bound node(s) explored, LP bound ${rootUpperBound.toFixed(1)}).`
-            : stoppedByGap || config.optimalityGapTolerance > 0
+            ? `Proven globally optimal solution (${totalNodesExplored} branch-and-bound node(s) explored, LP bound ${bestRootUpperBound.toFixed(1)}).`
+            : anyStoppedByGap || config.optimalityGapTolerance > 0
               ? `Feasible solution within configured optimality gap tolerance (${(config.optimalityGapTolerance * 100).toFixed(1)}%).`
-              : `Feasible solution found before time/search limit (${nodesExplored} nodes explored).`,
+              : `Feasible solution found before time/search limit (${totalNodesExplored} nodes explored).`,
         warnings,
-        statesExplored: nodesExplored
+        statesExplored: totalNodesExplored
     });
 }

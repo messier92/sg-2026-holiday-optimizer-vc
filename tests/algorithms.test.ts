@@ -85,6 +85,44 @@ function assertCommonInvariants(
             assert.equal(result.optimalityGuarantee, 'heuristic');
         }
     }
+
+    // ICT Invariants
+    const ict = input.rules.ict;
+    const availableICT = ict?.enabled ? Math.max(0, ict.annualICTQuota - ict.reserveICTDays) : 0;
+    assert.ok(
+        result.totalICTConsumed <= availableICT,
+        `${result.algorithmId}: ICT consumed (${result.totalICTConsumed}) > available ICT (${availableICT})`
+    );
+    assert.equal(result.selectedICTDates.length, result.totalICTConsumed);
+    assert.equal(result.ictPeriods.length, result.numberOfICTPeriods);
+
+    const periodSum = result.ictPeriods.reduce((s, p) => s + p.duration, 0);
+    assert.equal(
+        periodSum,
+        result.totalICTConsumed,
+        `${result.algorithmId}: sum of ICT period durations (${periodSum}) != totalICTConsumed (${result.totalICTConsumed})`
+    );
+
+    const ptoSet = new Set(result.selectedPTODates);
+    for (const ictDate of result.selectedICTDates) {
+        assert.ok(
+            !ptoSet.has(ictDate),
+            `${result.algorithmId}: date ${ictDate} allocated as both PTO and ICT`
+        );
+        assert.ok(
+            ictDate >= input.startDate && ictDate <= input.endDate,
+            `${result.algorithmId}: ICT date ${ictDate} outside [${input.startDate}, ${input.endDate}]`
+        );
+    }
+
+    // Component totals reconciliation on every continuous break
+    for (const b of result.breaks) {
+        assert.equal(
+            b.ptoUsed + b.ictUsed + b.weekendDays + b.publicHolidayDays,
+            b.duration,
+            `${result.algorithmId}: Break [${b.startDate}..${b.endDate}] components (${b.ptoUsed} PTO + ${b.ictUsed} ICT + ${b.weekendDays} Wknd + ${b.publicHolidayDays} PH) != duration (${b.duration})`
+        );
+    }
 }
 
 /**
@@ -633,5 +671,307 @@ test('20. Required PTO Date Ranges and conflict detection with Prohibited Date R
         assert.equal(resConflict[id].status, 'infeasible');
         assert.equal(resConflict[id].validation.isValid, false);
         assert.equal(resConflict[id].selectedPTODates.length, 0);
+    }
+});
+
+test('21. ICT Suite (Scenarios 1-5): 0 quota, 40-day quota, two 20-day periods, multiple smaller periods, and multi-month separation', async () => {
+    // ICT-1: ICT allowance of zero
+    const rulesZero = createDefaultRules();
+    rulesZero.ict.enabled = true;
+    rulesZero.ict.annualICTQuota = 0;
+    const inputZero: SharedOptimizationInput = {
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 3,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rulesZero
+    };
+    const resZero = await runAllFive(inputZero);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(resZero[id], inputZero);
+        assert.equal(resZero[id].totalICTConsumed, 0);
+        assert.equal(resZero[id].totalPTOConsumed, 3);
+    }
+
+    // ICT-2: ICT allowance of 40 calendar days
+    const rules40 = createDefaultRules();
+    rules40.ict.enabled = true;
+    rules40.ict.annualICTQuota = 40;
+    rules40.ict.allowUnusedICTQuota = false;
+    const input40: SharedOptimizationInput = {
+        startDate: '2027-01-01',
+        endDate: '2027-12-31',
+        ptoAllowance: 5,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules40
+    };
+    const res40 = await runAllFive(input40);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(res40[id], input40);
+        assert.equal(res40[id].totalICTConsumed, 40);
+        assert.equal(res40[id].remainingICTAllowance, 0);
+        assert.equal(res40[id].totalPTOConsumed, 5);
+    }
+
+    // ICT-3: ICT divided into two separate 20-day periods
+    const rules2x20 = createDefaultRules();
+    rules2x20.ict.enabled = true;
+    rules2x20.ict.annualICTQuota = 40;
+    rules2x20.ict.allowUnusedICTQuota = false;
+    rules2x20.ict.minNumberOfICTPeriods = 2;
+    rules2x20.ict.maxNumberOfICTPeriods = 2;
+    rules2x20.ict.minPeriodDuration = 20;
+    rules2x20.ict.maxPeriodDuration = 20;
+    const input2x20: SharedOptimizationInput = {
+        startDate: '2027-01-01',
+        endDate: '2027-06-30',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules2x20
+    };
+    const res2x20 = await runAllFive(input2x20);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(res2x20[id], input2x20);
+        assert.equal(res2x20[id].totalICTConsumed, 40);
+        assert.equal(res2x20[id].numberOfICTPeriods, 2);
+        assert.deepEqual(
+            res2x20[id].ictPeriods.map(p => p.duration),
+            [20, 20]
+        );
+    }
+
+    // ICT-4 & ICT-5: ICT divided into multiple smaller periods (14 + 14 + 12 = 40) separated by several months
+    const rulesMulti = createDefaultRules();
+    rulesMulti.ict.enabled = true;
+    rulesMulti.ict.annualICTQuota = 40;
+    rulesMulti.ict.allowUnusedICTQuota = false;
+    rulesMulti.ict.minNumberOfICTPeriods = 3;
+    rulesMulti.ict.maxNumberOfICTPeriods = 3;
+    rulesMulti.ict.minPeriodDuration = 12;
+    rulesMulti.ict.maxPeriodDuration = 14;
+    rulesMulti.ict.minCalendarDaysBetweenICTPeriods = 60;
+    const inputMulti: SharedOptimizationInput = {
+        startDate: '2027-01-01',
+        endDate: '2027-12-31',
+        ptoAllowance: 3,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rulesMulti
+    };
+    const resMulti = await runAllFive(inputMulti);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(resMulti[id], inputMulti);
+        assert.equal(resMulti[id].totalICTConsumed, 40);
+        assert.equal(resMulti[id].numberOfICTPeriods, 3);
+        for (const p of resMulti[id].ictPeriods) {
+            assert.ok(p.duration >= 12 && p.duration <= 14);
+        }
+        for (let i = 0; i < resMulti[id].ictPeriods.length - 1; i++) {
+            const gap =
+                resMulti[id].ictPeriods[i + 1].startIndex -
+                resMulti[id].ictPeriods[i].endIndex -
+                1;
+            assert.ok(gap >= 60);
+        }
+    }
+});
+
+test('22. ICT Suite (Scenarios 6-10 & 17-18): Weekend/PH inclusion, PTO+ICT connection, unused ICT quota, separate vs combined breaks', async () => {
+    // ICT-6 & ICT-7 & ICT-10: Fixed ICT period 2027-01-04 (Mon) to 2027-01-17 (Sun) = 14 calendar days
+    // plus another fixed ICT period 2027-03-08 (Mon) to 2027-03-12 (Fri) containing Hari Raya Puasa (Wed 2027-03-10) = 5 calendar days
+    // Total ICT consumed = 19 calendar days out of 40 (21 unused ICT days)
+    const rules = createDefaultRules();
+    rules.ict.enabled = true;
+    rules.ict.annualICTQuota = 40;
+    rules.ict.allowUnusedICTQuota = true;
+    rules.ict.fixedICTPeriods = [
+        { id: 'f1', startDate: '2027-01-04', endDate: '2027-01-17', label: 'Jan ICT' },
+        { id: 'f2', startDate: '2027-03-08', endDate: '2027-03-12', label: 'Mar ICT (with PH)' }
+    ];
+
+    const input: SharedOptimizationInput = {
+        startDate: '2027-01-01',
+        endDate: '2027-03-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules
+    };
+
+    const results = await runAllFive(input);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(results[id], input);
+        assert.equal(results[id].totalICTConsumed, 19);
+        assert.equal(results[id].remainingICTAllowance, 21);
+        assert.equal(results[id].numberOfICTPeriods, 2);
+        assert.equal(results[id].totalPTOConsumed, 2);
+        // Jan 1 (New Year's Day Fri) + Jan 2-3 (Sat-Sun) + Jan 4-17 (14d ICT) = 17-day continuous break!
+        // Mar 6-7 (Sat-Sun) + Mar 8-12 (5d ICT containing Hari Raya Puasa) + Mar 13-14 (Sat-Sun) = 9-day continuous break!
+        assert.ok(results[id].longestContinuousBreak >= 17);
+        assert.ok(results[id].breaks.length >= 2);
+    }
+
+    // ICT-8 & ICT-9 & ICT-18: ICT connected directly to PTO and public holidays into a single continuous break
+    const rulesConnect = createDefaultRules();
+    rulesConnect.ict.enabled = true;
+    rulesConnect.ict.annualICTQuota = 40;
+    rulesConnect.ict.allowUnusedICTQuota = true;
+    // Tue 2027-05-18 to Wed 2027-05-19 as ICT (2 days), adjacent to Mon May 17 (Hari Raya Haji) and Thu May 20 (Vesak Day)
+    // Taking 1 PTO day on Fri 2027-05-21 connects Sat May 15..Sun May 23 into a single 9-day continuous break!
+    rulesConnect.ict.fixedICTPeriods = [
+        { id: 'c1', startDate: '2027-05-18', endDate: '2027-05-19', label: 'Mid-week ICT' }
+    ];
+    const inputConnect: SharedOptimizationInput = {
+        startDate: '2027-05-15',
+        endDate: '2027-05-23',
+        ptoAllowance: 1,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rulesConnect
+    };
+    const resConnect = await runAllFive(inputConnect);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(resConnect[id], inputConnect);
+        assert.equal(resConnect[id].totalICTConsumed, 2);
+        assert.equal(resConnect[id].totalPTOConsumed, 1);
+        assert.deepEqual(resConnect[id].selectedPTODates, ['2027-05-21']);
+        assert.equal(resConnect[id].longestContinuousBreak, 9);
+        assert.equal(resConnect[id].breaks.length, 1);
+        const brk = resConnect[id].breaks[0];
+        assert.equal(brk.ptoUsed, 1);
+        assert.equal(brk.ictUsed, 2);
+        assert.equal(brk.publicHolidayDays, 2);
+        assert.equal(brk.weekendDays, 4);
+    }
+});
+
+test('23. ICT Suite (Scenarios 11-16 & 19-20): Quota overflow, overlapping fixed ICT, PTO/ICT conflict, out-of-range, duration/spacing bounds, and 0 remaining working days', async () => {
+    // ICT-11: ICT allocation exceeding available quota -> infeasible
+    const rules11 = createDefaultRules();
+    rules11.ict.enabled = true;
+    rules11.ict.annualICTQuota = 10;
+    rules11.ict.minICTDaysToAllocate = 15;
+    const res11 = await runAllFive({
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules11
+    });
+    for (const id of ALL_ALGOS) {
+        assert.equal(res11[id].status, 'infeasible');
+        assert.equal(res11[id].validation.isValid, false);
+    }
+
+    // ICT-12: Fixed ICT periods that overlap -> infeasible
+    const rules12 = createDefaultRules();
+    rules12.ict.enabled = true;
+    rules12.ict.fixedICTPeriods = [
+        { id: 'o1', startDate: '2027-05-03', endDate: '2027-05-10' },
+        { id: 'o2', startDate: '2027-05-08', endDate: '2027-05-14' }
+    ];
+    const res12 = await runAllFive({
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules12
+    });
+    for (const id of ALL_ALGOS) {
+        assert.equal(res12[id].status, 'infeasible');
+    }
+
+    // ICT-13 & ICT-20: Fixed ICT period overlapping with Required PTO / Prohibited range -> infeasible
+    const rules13 = createDefaultRules();
+    rules13.ict.enabled = true;
+    rules13.ict.fixedICTPeriods = [
+        { id: 'f1', startDate: '2027-05-10', endDate: '2027-05-14' }
+    ];
+    rules13.restrictions.requiredDateRanges = [
+        { id: 'r1', startDate: '2027-05-12', endDate: '2027-05-13' }
+    ];
+    const res13 = await runAllFive({
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules13
+    });
+    for (const id of ALL_ALGOS) {
+        assert.equal(res13[id].status, 'infeasible');
+    }
+
+    // ICT-14: Fixed ICT period outside the selected date range -> infeasible
+    const rules14 = createDefaultRules();
+    rules14.ict.enabled = true;
+    rules14.ict.fixedICTPeriods = [
+        { id: 'f1', startDate: '2027-04-10', endDate: '2027-04-20' }
+    ];
+    const res14 = await runAllFive({
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules14
+    });
+    for (const id of ALL_ALGOS) {
+        assert.equal(res14[id].status, 'infeasible');
+    }
+
+    // ICT-15: Minimum and maximum ICT period duration violation -> infeasible
+    const rules15 = createDefaultRules();
+    rules15.ict.enabled = true;
+    rules15.ict.minPeriodDuration = 10;
+    rules15.ict.maxPeriodDuration = 14;
+    rules15.ict.fixedICTPeriods = [
+        { id: 'f1', startDate: '2027-05-03', endDate: '2027-05-07' } // 5 days < min 10
+    ];
+    const res15 = await runAllFive({
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules15
+    });
+    for (const id of ALL_ALGOS) {
+        assert.equal(res15[id].status, 'infeasible');
+    }
+
+    // ICT-16: Minimum spacing between ICT periods violation -> infeasible
+    const rules16 = createDefaultRules();
+    rules16.ict.enabled = true;
+    rules16.ict.minCalendarDaysBetweenICTPeriods = 20;
+    rules16.ict.fixedICTPeriods = [
+        { id: 'f1', startDate: '2027-05-03', endDate: '2027-05-07' },
+        { id: 'f2', startDate: '2027-05-12', endDate: '2027-05-16' } // only 4 days gap < 20
+    ];
+    const res16 = await runAllFive({
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 2,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules16
+    });
+    for (const id of ALL_ALGOS) {
+        assert.equal(res16[id].status, 'infeasible');
+    }
+
+    // ICT-19: No available working days for additional PTO (ICT covers entire range)
+    const rules19 = createDefaultRules();
+    rules19.allocation.allowUnusedPTO = true;
+    rules19.ict.enabled = true;
+    rules19.ict.fixedICTPeriods = [
+        { id: 'f1', startDate: '2027-06-01', endDate: '2027-06-10' }
+    ];
+    const input19: SharedOptimizationInput = {
+        startDate: '2027-06-01',
+        endDate: '2027-06-10',
+        ptoAllowance: 4,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rules19
+    };
+    const res19 = await runAllFive(input19);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(res19[id], input19);
+        assert.equal(res19[id].totalICTConsumed, 10);
+        assert.equal(res19[id].totalPTOConsumed, 0);
+        assert.equal(res19[id].totalCalendarDaysOff, 10);
     }
 });

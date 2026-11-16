@@ -14,6 +14,9 @@ export interface CPSATIntervalVar {
 export interface CPSATModel {
     calendarDays: CalendarDay[];
     workingDays: CalendarDay[];
+    selectedICTDates: string[];
+    availableICT: number;
+    minICTRequired: number;
     intervalVars: CPSATIntervalVar[];
     intervalsByWorkStart: number[][];
     intervalsCoveringWorkDay: number[][];

@@ -15,14 +15,21 @@ export function createSeededRNG(seed: number): SeededRNG {
     };
 }
 
-export function createGARunContext(input: SharedOptimizationInput): GARunContext {
+export function createGARunContext(
+    input: SharedOptimizationInput,
+    selectedICTDates: string[] = []
+): GARunContext {
     const calendarDays = buildCalendarDays(
         input.startDate,
         input.endDate,
         input.publicHolidays,
-        input.rules.restrictions
+        input.rules.restrictions,
+        input.rules.ict
     );
-    const workingDays = calendarDays.filter(d => d.isEligibleWorkingDay);
+    const selectedICTSet = new Set<string>(selectedICTDates);
+    const workingDays = calendarDays.filter(
+        d => d.isEligibleWorkingDay && !selectedICTSet.has(d.date)
+    );
     const M = workingDays.length;
 
     const allowedMask = new Uint8Array(M);
@@ -31,9 +38,19 @@ export function createGARunContext(input: SharedOptimizationInput): GARunContext
 
     for (let i = 0; i < M; i++) {
         const w = workingDays[i];
-        if (isWorkingDayAllowedForPTO(w, input.rules)) {
+        if (isWorkingDayAllowedForPTO(w, input.rules, selectedICTSet)) {
             allowedMask[i] = 1;
-            if (w.isAdjacentToHoliday || w.isAdjacentToWeekend) {
+            const prevCalIsICT =
+                w.index > 0 && selectedICTSet.has(calendarDays[w.index - 1].date);
+            const nextCalIsICT =
+                w.index + 1 < calendarDays.length &&
+                selectedICTSet.has(calendarDays[w.index + 1].date);
+            if (
+                w.isAdjacentToHoliday ||
+                w.isAdjacentToWeekend ||
+                prevCalIsICT ||
+                nextCalIsICT
+            ) {
                 bridgePriorityIndices.push(i);
             }
         }
@@ -50,6 +67,8 @@ export function createGARunContext(input: SharedOptimizationInput): GARunContext
     return {
         calendarDays,
         workingDays,
+        selectedICTDates,
+        selectedICTSet,
         allowedMask,
         requiredMask,
         bridgePriorityIndices,
