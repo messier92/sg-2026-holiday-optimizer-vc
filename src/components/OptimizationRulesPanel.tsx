@@ -68,16 +68,18 @@ export function OptimizationRulesPanel() {
     const [isOpen, setIsOpen] = useState(false);
 
     // Date restriction input states
-    const [newBlackoutDate, setNewBlackoutDate] = useState('');
-    const [newRequiredDate, setNewRequiredDate] = useState('');
+    const [newReqRangeStart, setNewReqRangeStart] = useState('');
+    const [newReqRangeEnd, setNewReqRangeEnd] = useState('');
+    const [newReqRangeLabel, setNewReqRangeLabel] = useState('');
     const [newRangeStart, setNewRangeStart] = useState('');
     const [newRangeEnd, setNewRangeEnd] = useState('');
     const [newRangeLabel, setNewRangeLabel] = useState('');
     const [restrictionWarning, setRestrictionWarning] = useState<string | null>(null);
 
     const availablePTO = Math.max(0, duration - rules.allocation.reservePTODays);
+    const requiredDateRanges = rules.restrictions.requiredDateRanges ?? [];
 
-    // Detect any conflict between requiredPTODates and blackout/prohibited ranges
+    // Detect any conflict between required PTO ranges/dates and prohibited ranges
     const conflicts: string[] = [];
     const blackoutSet = new Set(rules.restrictions.blackoutDates);
     for (const req of rules.restrictions.requiredPTODates) {
@@ -85,64 +87,77 @@ export function OptimizationRulesPanel() {
             conflicts.push(req);
         }
     }
+    for (const reqRange of requiredDateRanges) {
+        for (const proRange of rules.restrictions.prohibitedDateRanges) {
+            if (reqRange.startDate <= proRange.endDate && reqRange.endDate >= proRange.startDate) {
+                const overlapStart =
+                    reqRange.startDate > proRange.startDate ? reqRange.startDate : proRange.startDate;
+                const overlapEnd =
+                    reqRange.endDate < proRange.endDate ? reqRange.endDate : proRange.endDate;
+                conflicts.push(`${overlapStart} → ${overlapEnd}`);
+            }
+        }
+    }
 
-    const handleAddBlackoutDate = () => {
+    const handleAddRequiredRange = () => {
         setRestrictionWarning(null);
-        if (!newBlackoutDate) return;
-        const nonWorkingReason = isWeekendOrHoliday(newBlackoutDate);
-        if (nonWorkingReason) {
+        if (!newReqRangeStart || !newReqRangeEnd) return;
+        if (newReqRangeStart > newReqRangeEnd) {
+            setRestrictionWarning('Required PTO range Start Date must be on or before End Date.');
+            return;
+        }
+        const conflictingPro = rules.restrictions.prohibitedDateRanges.find(
+            r => r.startDate <= newReqRangeEnd && r.endDate >= newReqRangeStart
+        );
+        if (conflictingPro) {
             setRestrictionWarning(
-                `${newBlackoutDate} is a ${nonWorkingReason}. Weekends and public holidays never consume PTO.`
+                `Conflict: Required PTO range [${newReqRangeStart} to ${newReqRangeEnd}] overlaps Prohibited range [${conflictingPro.startDate} to ${conflictingPro.endDate}].`
             );
             return;
         }
-        if (rules.restrictions.requiredPTODates.includes(newBlackoutDate)) {
-            setRestrictionWarning(
-                `Conflict: ${newBlackoutDate} is already listed as a Required PTO date.`
-            );
-            return;
-        }
-        if (!rules.restrictions.blackoutDates.includes(newBlackoutDate)) {
-            setRules(prev => ({
-                ...prev,
-                restrictions: {
-                    ...prev.restrictions,
-                    blackoutDates: [...prev.restrictions.blackoutDates, newBlackoutDate].sort()
-                }
-            }));
-        }
-        setNewBlackoutDate('');
-    };
 
-    const handleAddRequiredDate = () => {
-        setRestrictionWarning(null);
-        if (!newRequiredDate) return;
-        const nonWorkingReason = isWeekendOrHoliday(newRequiredDate);
-        if (nonWorkingReason) {
+        // Verify that the range contains at least one eligible working day
+        let hasWorkingDay = false;
+        const [sy, sm, sd] = newReqRangeStart.split('-').map(Number);
+        const [ey, em, ed] = newReqRangeEnd.split('-').map(Number);
+        const startMs = Date.UTC(sy, sm - 1, sd);
+        const endMs = Date.UTC(ey, em - 1, ed);
+        for (let t = startMs; t <= endMs; t += 24 * 60 * 60 * 1000) {
+            const d = new Date(t);
+            const y = d.getUTCFullYear();
+            const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            const dStr = `${y}-${m}-${day}`;
+            if (!isWeekendOrHoliday(dStr)) {
+                hasWorkingDay = true;
+                break;
+            }
+        }
+        if (!hasWorkingDay) {
             setRestrictionWarning(
-                `${newRequiredDate} is a ${nonWorkingReason}. Only eligible working days can be required PTO.`
+                `Required PTO range [${newReqRangeStart} to ${newReqRangeEnd}] contains only weekends or public holidays. Only eligible working days consume PTO.`
             );
             return;
         }
-        if (
-            blackoutSet.has(newRequiredDate) ||
-            isDateInProhibitedRange(newRequiredDate, rules.restrictions)
-        ) {
-            setRestrictionWarning(
-                `Conflict: ${newRequiredDate} falls on a Blackout date or Prohibited date range.`
-            );
-            return;
-        }
-        if (!rules.restrictions.requiredPTODates.includes(newRequiredDate)) {
-            setRules(prev => ({
-                ...prev,
-                restrictions: {
-                    ...prev.restrictions,
-                    requiredPTODates: [...prev.restrictions.requiredPTODates, newRequiredDate].sort()
-                }
-            }));
-        }
-        setNewRequiredDate('');
+
+        setRules(prev => ({
+            ...prev,
+            restrictions: {
+                ...prev.restrictions,
+                requiredDateRanges: [
+                    ...(prev.restrictions.requiredDateRanges ?? []),
+                    {
+                        id: `req_${newReqRangeStart}_${newReqRangeEnd}_${Date.now()}`,
+                        startDate: newReqRangeStart,
+                        endDate: newReqRangeEnd,
+                        label: newReqRangeLabel.trim() || undefined
+                    }
+                ]
+            }
+        }));
+        setNewReqRangeStart('');
+        setNewReqRangeEnd('');
+        setNewReqRangeLabel('');
     };
 
     const handleAddProhibitedRange = () => {
@@ -158,6 +173,15 @@ export function OptimizationRulesPanel() {
         if (conflictingReq) {
             setRestrictionWarning(
                 `Conflict: Prohibited range [${newRangeStart} to ${newRangeEnd}] overlaps Required PTO date ${conflictingReq}.`
+            );
+            return;
+        }
+        const conflictingReqRange = requiredDateRanges.find(
+            r => r.startDate <= newRangeEnd && r.endDate >= newRangeStart
+        );
+        if (conflictingReqRange) {
+            setRestrictionWarning(
+                `Conflict: Prohibited range [${newRangeStart} to ${newRangeEnd}] overlaps Required PTO range [${conflictingReqRange.startDate} to ${conflictingReqRange.endDate}].`
             );
             return;
         }
@@ -432,18 +456,26 @@ export function OptimizationRulesPanel() {
                                             <input
                                                 type="checkbox"
                                                 checked={catRule.enabled}
-                                                onChange={e =>
+                                                onChange={e => {
+                                                    const nextEnabled = e.target.checked;
                                                     setRules(prev => ({
                                                         ...prev,
                                                         breakDuration: {
                                                             ...prev.breakDuration,
                                                             [key]: {
                                                                 ...prev.breakDuration[key],
-                                                                enabled: e.target.checked
+                                                                enabled: nextEnabled,
+                                                                minCount: nextEnabled
+                                                                    ? Math.max(
+                                                                          1,
+                                                                          prev.breakDuration[key]
+                                                                              .minCount || 1
+                                                                      )
+                                                                    : 0
                                                             }
                                                         }
-                                                    }))
-                                                }
+                                                    }));
+                                                }}
                                                 className="rounded text-indigo-600"
                                             />
                                         </label>
@@ -708,42 +740,64 @@ export function OptimizationRulesPanel() {
                             </div>
                         )}
 
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                            {/* 1. Blackout Dates */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {/* 1. Required PTO Date Ranges (Mandatory) */}
                             <div className="p-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/10 space-y-2">
                                 <label className="block text-xs font-semibold">
-                                    1. Blackout Dates (No PTO)
+                                    1. Required PTO Date Ranges (Mandatory)
                                 </label>
-                                <div className="flex gap-2">
+                                <div className="grid grid-cols-2 gap-1.5">
                                     <input
                                         type="date"
                                         min={startDate}
                                         max={endDate}
-                                        value={newBlackoutDate}
-                                        onChange={e => setNewBlackoutDate(e.target.value)}
+                                        value={newReqRangeStart}
+                                        onChange={e => setNewReqRangeStart(e.target.value)}
+                                        className="px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
+                                    />
+                                    <input
+                                        type="date"
+                                        min={newReqRangeStart || startDate}
+                                        max={endDate}
+                                        value={newReqRangeEnd}
+                                        onChange={e => setNewReqRangeEnd(e.target.value)}
+                                        className="px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Optional label (e.g. Family Trip)"
+                                        value={newReqRangeLabel}
+                                        onChange={e => setNewReqRangeLabel(e.target.value)}
                                         className="flex-1 px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
                                     />
                                     <button
                                         type="button"
-                                        onClick={handleAddBlackoutDate}
+                                        onClick={handleAddRequiredRange}
                                         className="px-2.5 py-1 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 inline-flex items-center gap-1"
                                     >
                                         <Plus className="w-3.5 h-3.5" /> Add
                                     </button>
                                 </div>
-                                <div className="flex flex-wrap gap-1.5 pt-1">
-                                    {rules.restrictions.blackoutDates.length === 0 ? (
+                                <div className="space-y-1 pt-1">
+                                    {requiredDateRanges.length === 0 ? (
                                         <span className="text-[11px] text-muted-foreground">
-                                            No blackout dates added.
+                                            No required PTO ranges added.
                                         </span>
                                     ) : (
-                                        rules.restrictions.blackoutDates.map(d => (
-                                            <span
-                                                key={d}
-                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30"
+                                        requiredDateRanges.map(r => (
+                                            <div
+                                                key={r.id}
+                                                className="flex items-center justify-between px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300"
                                             >
-                                                <CalendarOff className="w-3 h-3" />
-                                                {d}
+                                                <span className="inline-flex items-center gap-1.5">
+                                                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                                    <span>
+                                                        {r.startDate} → {r.endDate}
+                                                        {r.label ? ` (${r.label})` : ''}
+                                                    </span>
+                                                </span>
                                                 <button
                                                     type="button"
                                                     onClick={() =>
@@ -751,86 +805,27 @@ export function OptimizationRulesPanel() {
                                                             ...prev,
                                                             restrictions: {
                                                                 ...prev.restrictions,
-                                                                blackoutDates:
-                                                                    prev.restrictions.blackoutDates.filter(
-                                                                        x => x !== d
-                                                                    )
+                                                                requiredDateRanges: (
+                                                                    prev.restrictions
+                                                                        .requiredDateRanges ?? []
+                                                                ).filter(x => x.id !== r.id)
                                                             }
                                                         }))
                                                     }
-                                                    className="hover:text-red-500"
+                                                    className="text-red-500 hover:text-red-400"
                                                 >
-                                                    <Trash2 className="w-3 h-3" />
+                                                    <Trash2 className="w-3.5 h-3.5" />
                                                 </button>
-                                            </span>
+                                            </div>
                                         ))
                                     )}
                                 </div>
                             </div>
 
-                            {/* 2. Required PTO Dates */}
+                            {/* 2. Prohibited Date Ranges (No PTO) */}
                             <div className="p-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/10 space-y-2">
                                 <label className="block text-xs font-semibold">
-                                    2. Required PTO Dates (Mandatory)
-                                </label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="date"
-                                        min={startDate}
-                                        max={endDate}
-                                        value={newRequiredDate}
-                                        onChange={e => setNewRequiredDate(e.target.value)}
-                                        className="flex-1 px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={handleAddRequiredDate}
-                                        className="px-2.5 py-1 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 inline-flex items-center gap-1"
-                                    >
-                                        <Plus className="w-3.5 h-3.5" /> Add
-                                    </button>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5 pt-1">
-                                    {rules.restrictions.requiredPTODates.length === 0 ? (
-                                        <span className="text-[11px] text-muted-foreground">
-                                            No required PTO dates added.
-                                        </span>
-                                    ) : (
-                                        rules.restrictions.requiredPTODates.map(d => (
-                                            <span
-                                                key={d}
-                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
-                                            >
-                                                <CheckCircle2 className="w-3 h-3" />
-                                                {d}
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        setRules(prev => ({
-                                                            ...prev,
-                                                            restrictions: {
-                                                                ...prev.restrictions,
-                                                                requiredPTODates:
-                                                                    prev.restrictions.requiredPTODates.filter(
-                                                                        x => x !== d
-                                                                    )
-                                                            }
-                                                        }))
-                                                    }
-                                                    className="hover:text-red-500"
-                                                >
-                                                    <Trash2 className="w-3 h-3" />
-                                                </button>
-                                            </span>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* 3. Prohibited Date Ranges */}
-                            <div className="p-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/10 space-y-2">
-                                <label className="block text-xs font-semibold">
-                                    3. Prohibited Date Ranges
+                                    2. Prohibited Date Ranges (No PTO)
                                 </label>
                                 <div className="grid grid-cols-2 gap-1.5">
                                     <input
@@ -875,11 +870,14 @@ export function OptimizationRulesPanel() {
                                         rules.restrictions.prohibitedDateRanges.map(r => (
                                             <div
                                                 key={r.id}
-                                                className="flex items-center justify-between px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-xs"
+                                                className="flex items-center justify-between px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-xs text-red-700 dark:text-red-300"
                                             >
-                                                <span>
-                                                    {r.startDate} → {r.endDate}
-                                                    {r.label ? ` (${r.label})` : ''}
+                                                <span className="inline-flex items-center gap-1.5">
+                                                    <CalendarOff className="w-3.5 h-3.5 shrink-0" />
+                                                    <span>
+                                                        {r.startDate} → {r.endDate}
+                                                        {r.label ? ` (${r.label})` : ''}
+                                                    </span>
                                                 </span>
                                                 <button
                                                     type="button"

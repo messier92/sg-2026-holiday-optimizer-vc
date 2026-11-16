@@ -65,9 +65,12 @@ export interface ProhibitedDateRange {
     label?: string;
 }
 
+export type RequiredDateRange = ProhibitedDateRange;
+
 export interface DateRestrictions {
     blackoutDates: string[];
     requiredPTODates: string[];
+    requiredDateRanges?: RequiredDateRange[];
     prohibitedDateRanges: ProhibitedDateRange[];
 }
 
@@ -347,10 +350,10 @@ export function createDefaultRules(): SharedOptimizationRules {
             allowPTOAdjacentToWeekends: true
         },
         breakDuration: {
-            short: { enabled: true, minDuration: 4, minCount: 0, maxCount: null },
-            medium: { enabled: true, minDuration: 7, minCount: 0, maxCount: null },
-            long: { enabled: true, minDuration: 10, minCount: 0, maxCount: null },
-            extended: { enabled: true, minDuration: 14, minCount: 0, maxCount: null },
+            short: { enabled: false, minDuration: 4, minCount: 0, maxCount: null },
+            medium: { enabled: false, minDuration: 7, minCount: 0, maxCount: null },
+            long: { enabled: false, minDuration: 10, minCount: 0, maxCount: null },
+            extended: { enabled: false, minDuration: 14, minCount: 0, maxCount: null },
             allowOverlappingCategoryCounts: false
         },
         distribution: {
@@ -363,6 +366,7 @@ export function createDefaultRules(): SharedOptimizationRules {
         restrictions: {
             blackoutDates: [],
             requiredPTODates: [],
+            requiredDateRanges: [],
             prohibitedDateRanges: []
         },
         objectives: {

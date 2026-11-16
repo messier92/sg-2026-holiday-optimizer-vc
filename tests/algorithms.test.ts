@@ -410,6 +410,7 @@ test('12. Leap years (February 2028 includes 2028-02-29)', async () => {
 
 test('13. Infeasible configurations (impossible break count requirements)', async () => {
     const rules = createDefaultRules();
+    rules.breakDuration.extended.enabled = true;
     rules.breakDuration.extended.minCount = 3; // Impossible to get three 14-day breaks with 2 PTO days
 
     const input: SharedOptimizationInput = {
@@ -540,6 +541,11 @@ test('18. Full-year Singapore 2027 integration across all 5 algorithms & legacy 
 test('19. 15 PTO days with prohibited date range overlapping suggested PTO dates and allowUnusedPTO unchecked by default', async () => {
     const rules = createDefaultRules();
     assert.equal(rules.allocation.allowUnusedPTO, false);
+    assert.equal(rules.breakDuration.short.enabled, false);
+    assert.equal(rules.breakDuration.medium.enabled, false);
+    assert.equal(rules.breakDuration.long.enabled, false);
+    assert.equal(rules.breakDuration.extended.enabled, false);
+    assert.equal(rules.breakDuration.allowOverlappingCategoryCounts, false);
 
     // Prohibit May 18-21 and March 8-12 (which overlap with prime holiday bridges)
     rules.restrictions.prohibitedDateRanges = [
@@ -579,4 +585,53 @@ test('19. 15 PTO days with prohibited date range overlapping suggested PTO dates
     const excluded = new Set(calDays.filter(d => d.isBlackout).map(d => d.date));
     const legacy15 = getMaximizePTO('2027-01-01', 15, PUBLIC_HOLIDAYS_2027, '2027-12-31', excluded);
     assert.equal(legacy15.length, 15);
+});
+
+test('20. Required PTO Date Ranges and conflict detection with Prohibited Date Ranges', async () => {
+    // 20a: Valid required PTO date range spanning May 18-21 (where May 20 is Vesak Day public holiday)
+    const rulesValid = createDefaultRules();
+    rulesValid.restrictions.requiredDateRanges = [
+        { id: 'req1', startDate: '2027-05-18', endDate: '2027-05-21', label: 'May Trip' }
+    ];
+    const inputValid: SharedOptimizationInput = {
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 3,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rulesValid
+    };
+
+    const resValid = await runAllFive(inputValid);
+    for (const id of ALL_ALGOS) {
+        assertCommonInvariants(resValid[id], inputValid);
+        assert.equal(resValid[id].validation.isValid, true);
+        assert.deepEqual(resValid[id].selectedPTODates, [
+            '2027-05-18',
+            '2027-05-19',
+            '2027-05-21'
+        ]);
+    }
+
+    // 20b: Conflicting required date range and prohibited date range -> infeasible
+    const rulesConflict = createDefaultRules();
+    rulesConflict.restrictions.requiredDateRanges = [
+        { id: 'req1', startDate: '2027-05-18', endDate: '2027-05-21' }
+    ];
+    rulesConflict.restrictions.prohibitedDateRanges = [
+        { id: 'pro1', startDate: '2027-05-19', endDate: '2027-05-25' }
+    ];
+    const inputConflict: SharedOptimizationInput = {
+        startDate: '2027-05-01',
+        endDate: '2027-05-31',
+        ptoAllowance: 5,
+        publicHolidays: PUBLIC_HOLIDAYS_2027,
+        rules: rulesConflict
+    };
+
+    const resConflict = await runAllFive(inputConflict);
+    for (const id of ALL_ALGOS) {
+        assert.equal(resConflict[id].status, 'infeasible');
+        assert.equal(resConflict[id].validation.isValid, false);
+        assert.equal(resConflict[id].selectedPTODates.length, 0);
+    }
 });

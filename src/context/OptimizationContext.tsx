@@ -31,7 +31,7 @@ export type AppRoute =
     | '/algorithms/genetic'
     | '/algorithms/compare';
 
-const STORAGE_KEY = 'sg_ph_optimizer_2027_state_v2';
+const STORAGE_KEY = 'sg_ph_optimizer_2027_state_v4';
 
 interface PersistedState {
     startDate: string;

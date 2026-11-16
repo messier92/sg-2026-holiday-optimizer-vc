@@ -70,6 +70,8 @@ export function validateAllocation(
     // 4. Restriction conflicts (Required vs Blackout/Prohibited/Non-working)
     const blackoutSet = new Set(rules.restrictions.blackoutDates);
     const conflictingRequired: string[] = [];
+    const allRequiredWorkingDates = new Set<string>();
+
     for (const req of rules.restrictions.requiredPTODates) {
         const d = dayMap.get(req);
         if (blackoutSet.has(req) || isDateInProhibitedRange(req, rules.restrictions)) {
@@ -78,15 +80,43 @@ export function validateAllocation(
             conflictingRequired.push(`${req} (outside date range)`);
         } else if (!d.isEligibleWorkingDay) {
             conflictingRequired.push(`${req} (non-working day)`);
+        } else {
+            allRequiredWorkingDates.add(req);
         }
     }
+
+    for (const reqRange of rules.restrictions.requiredDateRanges ?? []) {
+        if (!reqRange.startDate || !reqRange.endDate || reqRange.startDate > reqRange.endDate) {
+            conflictingRequired.push(`${reqRange.startDate}..${reqRange.endDate} (invalid range)`);
+            continue;
+        }
+        if (reqRange.startDate < startDate || reqRange.endDate > endDate) {
+            conflictingRequired.push(`${reqRange.startDate}..${reqRange.endDate} (outside date range)`);
+            continue;
+        }
+        let eligibleInRange = 0;
+        for (const d of days) {
+            if (d.date < reqRange.startDate || d.date > reqRange.endDate) continue;
+            if (blackoutSet.has(d.date) || isDateInProhibitedRange(d.date, rules.restrictions)) {
+                conflictingRequired.push(`${d.date} (conflicts with prohibited range)`);
+            }
+            if (d.isEligibleWorkingDay) {
+                eligibleInRange++;
+                allRequiredWorkingDates.add(d.date);
+            }
+        }
+        if (eligibleInRange === 0) {
+            conflictingRequired.push(`${reqRange.startDate}..${reqRange.endDate} (no eligible working days)`);
+        }
+    }
+
     hardConstraints.push({
         code: 'NO_RESTRICTION_CONFLICTS',
         severity: 'hard',
         satisfied: conflictingRequired.length === 0,
         message:
             conflictingRequired.length === 0
-                ? 'No conflicts between required PTO dates and prohibited/blackout/non-working dates.'
+                ? 'No conflicts between required PTO ranges/dates and prohibited/non-working dates.'
                 : `Conflicting date restrictions: ${conflictingRequired.join('; ')}.`
     });
 
@@ -100,19 +130,19 @@ export function validateAllocation(
         satisfied: blackoutViolations.length === 0,
         message:
             blackoutViolations.length === 0
-                ? 'All blackout dates and prohibited date ranges respected.'
-                : `PTO allocated on blackout/prohibited date(s): ${blackoutViolations.join(', ')}.`
+                ? 'All prohibited date ranges respected.'
+                : `PTO allocated on prohibited date(s): ${blackoutViolations.join(', ')}.`
     });
 
     // 6. Required PTO dates satisfied
-    const missingRequired = rules.restrictions.requiredPTODates.filter(req => !ptoSet.has(req));
+    const missingRequired = Array.from(allRequiredWorkingDates).filter(req => !ptoSet.has(req));
     hardConstraints.push({
         code: 'REQUIRED_PTO_DATES',
         severity: 'hard',
         satisfied: missingRequired.length === 0 && conflictingRequired.length === 0,
         message:
             missingRequired.length === 0 && conflictingRequired.length === 0
-                ? `All required PTO dates (${rules.restrictions.requiredPTODates.length}) allocated.`
+                ? `All required PTO working dates (${allRequiredWorkingDates.size}) allocated.`
                 : `Missing required PTO date(s): ${missingRequired.join(', ') || conflictingRequired.join(', ')}.`
     });
 

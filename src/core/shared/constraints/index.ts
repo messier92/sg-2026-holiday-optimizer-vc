@@ -53,7 +53,7 @@ export function checkUpfrontFeasibility(
     const dayByDate = new Map<string, CalendarDay>();
     for (const d of days) dayByDate.set(d.date, d);
 
-    const requiredEligibleDates: string[] = [];
+    const requiredEligibleSet = new Set<string>();
     for (const reqDate of rules.restrictions.requiredPTODates) {
         if (blackoutSet.has(reqDate) || isDateInProhibitedRange(reqDate, rules.restrictions)) {
             reasons.push(`Conflicting restriction: ${reqDate} is marked as both Required PTO and Blackout/Prohibited.`);
@@ -66,9 +66,48 @@ export function checkUpfrontFeasibility(
         } else if (!isWorkingDayAllowedForPTO(calDay, rules)) {
             reasons.push(`Required PTO date ${reqDate} violates adjacency or blackout restrictions.`);
         } else {
-            requiredEligibleDates.push(reqDate);
+            requiredEligibleSet.add(reqDate);
         }
     }
+
+    for (const reqRange of rules.restrictions.requiredDateRanges ?? []) {
+        if (!reqRange.startDate || !reqRange.endDate || reqRange.startDate > reqRange.endDate) {
+            reasons.push('Invalid Required PTO date range.');
+            continue;
+        }
+        if (reqRange.startDate < startDate || reqRange.endDate > endDate) {
+            reasons.push(
+                `Required PTO range [${reqRange.startDate} to ${reqRange.endDate}] is outside the selected date range (${startDate} to ${endDate}).`
+            );
+            continue;
+        }
+        let eligibleInRange = 0;
+        for (const d of days) {
+            if (d.date < reqRange.startDate || d.date > reqRange.endDate) continue;
+            if (blackoutSet.has(d.date) || isDateInProhibitedRange(d.date, rules.restrictions)) {
+                reasons.push(
+                    `Conflicting restriction: ${d.date} is marked as both Required PTO and Prohibited.`
+                );
+            }
+            if (d.isEligibleWorkingDay) {
+                eligibleInRange++;
+                if (!isWorkingDayAllowedForPTO(d, rules)) {
+                    reasons.push(
+                        `Required PTO date ${d.date} violates adjacency or prohibited restrictions.`
+                    );
+                } else {
+                    requiredEligibleSet.add(d.date);
+                }
+            }
+        }
+        if (eligibleInRange === 0) {
+            reasons.push(
+                `Required PTO range [${reqRange.startDate} to ${reqRange.endDate}] contains no eligible working days.`
+            );
+        }
+    }
+
+    const requiredEligibleDates = Array.from(requiredEligibleSet).sort();
 
     if (requiredEligibleDates.length > availablePTO) {
         reasons.push(
@@ -235,7 +274,7 @@ export function isAllocationHardValid(
         }
     }
 
-    // Required PTO dates
+    // Required PTO dates and ranges
     const blackoutSet = new Set(rules.restrictions.blackoutDates);
     for (const reqStr of rules.restrictions.requiredPTODates) {
         if (blackoutSet.has(reqStr) || isDateInProhibitedRange(reqStr, rules.restrictions)) {
@@ -246,6 +285,34 @@ export function isAllocationHardValid(
             return false;
         }
         if (!ptoSet.has(reqStr)) {
+            return false;
+        }
+    }
+
+    for (const reqRange of rules.restrictions.requiredDateRanges ?? []) {
+        if (
+            !reqRange.startDate ||
+            !reqRange.endDate ||
+            reqRange.startDate > reqRange.endDate ||
+            reqRange.startDate < input.startDate ||
+            reqRange.endDate > input.endDate
+        ) {
+            return false;
+        }
+        let eligibleInRange = 0;
+        for (const d of calendarDays) {
+            if (d.date < reqRange.startDate || d.date > reqRange.endDate) continue;
+            if (blackoutSet.has(d.date) || isDateInProhibitedRange(d.date, rules.restrictions)) {
+                return false;
+            }
+            if (d.isEligibleWorkingDay) {
+                eligibleInRange++;
+                if (!ptoSet.has(d.date)) {
+                    return false;
+                }
+            }
+        }
+        if (eligibleInRange === 0) {
             return false;
         }
     }

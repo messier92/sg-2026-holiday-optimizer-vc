@@ -72,6 +72,16 @@ export function isDateInProhibitedRange(dateStr: string, restrictions?: DateRest
     return false;
 }
 
+export function isDateInRequiredRange(dateStr: string, restrictions?: DateRestrictions): boolean {
+    if (!restrictions?.requiredDateRanges) return false;
+    for (const r of restrictions.requiredDateRanges) {
+        if (r.startDate && r.endDate && dateStr >= r.startDate && dateStr <= r.endDate) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Builds the chronological array of CalendarDay objects from startDate to endDate (inclusive).
  */
@@ -113,7 +123,8 @@ export function buildCalendarDays(
 
         const isBlackout =
             isEligibleWorkingDay && (blackoutSet.has(dateStr) || isDateInProhibitedRange(dateStr, restrictions));
-        const isRequiredPTO = isEligibleWorkingDay && requiredSet.has(dateStr);
+        const isRequiredPTO =
+            isEligibleWorkingDay && (requiredSet.has(dateStr) || isDateInRequiredRange(dateStr, restrictions));
 
         days.push({
             index: i,
@@ -177,9 +188,11 @@ export function classifyBreakDuration(
         { name: 'extended' as const, minDuration: breakRules.extended.minDuration, enabled: breakRules.extended.enabled }
     ].sort((a, b) => a.minDuration - b.minDuration);
 
+    const anyCategoryEnabled = orderedCategories.some(c => c.enabled);
+
     const matched: BreakCategoryName[] = [];
     for (const cat of orderedCategories) {
-        if (cat.enabled && duration >= cat.minDuration) {
+        if ((anyCategoryEnabled ? cat.enabled : true) && duration >= cat.minDuration) {
             matched.push(cat.name);
         }
     }

@@ -275,8 +275,7 @@ export function AlgorithmPage({ algorithmId }: { algorithmId: AlgorithmId }) {
                             </div>
                             <div>
                                 <strong>Restrictions:</strong>{' '}
-                                {rules.restrictions.blackoutDates.length} blackout,{' '}
-                                {rules.restrictions.requiredPTODates.length} required,{' '}
+                                {(rules.restrictions.requiredDateRanges ?? []).length} required range(s),{' '}
                                 {rules.restrictions.prohibitedDateRanges.length} prohibited range(s)
                             </div>
                         </div>
