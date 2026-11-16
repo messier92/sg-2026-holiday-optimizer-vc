@@ -22,7 +22,6 @@ import {
 } from '@/core';
 import { useOptimization, type AppRoute } from '@/context/OptimizationContext';
 import { OptimizationRulesPanel } from './OptimizationRulesPanel';
-import { SelectedAlgorithmsConfigSection } from './AlgorithmSpecificWidgets';
 import { ResultSummaryPanel } from './ResultSummaryPanel';
 
 export { PUBLIC_HOLIDAYS_2027 };
@@ -756,9 +755,6 @@ export function Calendar() {
 
                     {/* Section 2C & 3: Collapsible Shared Optimization Rules & Preferences */}
                     <OptimizationRulesPanel />
-
-                    {/* Section 4: Conditional Algorithm-Specific Widgets */}
-                    <SelectedAlgorithmsConfigSection />
                 </div>
 
                 {/* Inline Algorithm Results & Comparison Preview when algorithms have executed */}

@@ -16,7 +16,8 @@ export function getMaximizePTO(
     ptoCount: number,
     publicHolidays: PublicHoliday[],
     endDate?: string,
-    excludedDates?: ReadonlySet<string>
+    excludedDates?: ReadonlySet<string>,
+    requiredDates?: ReadonlySet<string>
 ): string[] {
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
@@ -49,6 +50,25 @@ export function getMaximizePTO(
 
     const selectedPTOs = new Set<string>();
     let remainingPTOs = ptoCount;
+
+    // 0. Mandatory Required PTO Dates (from Required PTO Date Ranges)
+    if (requiredDates) {
+        const sortedReq = Array.from(requiredDates).sort();
+        for (const d of sortedReq) {
+            if (remainingPTOs <= 0) break;
+            const t = new Date(d).setHours(0, 0, 0, 0);
+            if (
+                t >= start.getTime() &&
+                t <= endOfYear.getTime() &&
+                !isExcluded(d) &&
+                !isHoliday(t) &&
+                !selectedPTOs.has(d)
+            ) {
+                selectedPTOs.add(d);
+                remainingPTOs--;
+            }
+        }
+    }
 
     // 1. Fixed Dates
     const FIXED_DATES = [
