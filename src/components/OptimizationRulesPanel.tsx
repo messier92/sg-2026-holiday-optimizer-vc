@@ -206,12 +206,245 @@ export function OptimizationRulesPanel() {
     };
 
     return (
-        <div className="mt-6 rounded-2xl bg-white/60 dark:bg-white/5 border border-indigo-500/20 overflow-hidden transition-all">
-            <button
-                type="button"
-                onClick={() => setIsOpen(o => !o)}
-                className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-indigo-500/5 transition-colors"
-            >
+        <div className="mt-6 space-y-6">
+            {/* Prominent, always-visible D. Date Restrictions Widget (replaces Manual PTO) */}
+            <div className="p-5 md:p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-indigo-500/5 to-rose-500/10 border-2 border-indigo-500/30 shadow-md space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-sm md:text-base font-extrabold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
+                                D. Date Restrictions (Eligible Working Days Only)
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                                Lock Required PTO or Block Prohibited Ranges
+                            </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            Add mandatory PTO date ranges you want to lock in, or prohibited date ranges where PTO cannot be allocated. Weekends and Singapore public holidays never consume PTO.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                            {requiredDateRanges.length} Required Range(s)
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30">
+                            {rules.restrictions.prohibitedDateRanges.length} Prohibited Range(s)
+                        </span>
+                    </div>
+                </div>
+
+                {(restrictionWarning || conflicts.length > 0) && (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <div>
+                            {restrictionWarning && <p>{restrictionWarning}</p>}
+                            {conflicts.length > 0 && (
+                                <p className="font-semibold">
+                                    Conflict detected on date(s): {conflicts.join(', ')} (marked as both Required and Prohibited).
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* 1. Required PTO Date Ranges (Mandatory) */}
+                    <div className="p-4 rounded-xl bg-white/75 dark:bg-black/30 border-2 border-emerald-500/30 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs md:text-sm font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                1. Required PTO Date Ranges (Mandatory)
+                            </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <span className="block text-[11px] font-medium text-muted-foreground mb-1">
+                                    Start Date
+                                </span>
+                                <input
+                                    type="date"
+                                    min={startDate}
+                                    max={endDate}
+                                    value={newReqRangeStart}
+                                    onChange={e => setNewReqRangeStart(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-black/40 border border-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
+                                />
+                            </div>
+                            <div>
+                                <span className="block text-[11px] font-medium text-muted-foreground mb-1">
+                                    End Date
+                                </span>
+                                <input
+                                    type="date"
+                                    min={newReqRangeStart || startDate}
+                                    max={endDate}
+                                    value={newReqRangeEnd}
+                                    onChange={e => setNewReqRangeEnd(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-black/40 border border-emerald-500/30 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                placeholder="Optional label (e.g. Family Trip)"
+                                value={newReqRangeLabel}
+                                onChange={e => setNewReqRangeLabel(e.target.value)}
+                                className="flex-1 px-2.5 py-1.5 rounded-lg bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
+                            />
+                            <button
+                                type="button"
+                                onClick={handleAddRequiredRange}
+                                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 inline-flex items-center gap-1 shadow-sm"
+                            >
+                                <Plus className="w-3.5 h-3.5" /> Add Required
+                            </button>
+                        </div>
+                        <div className="space-y-1.5 pt-1">
+                            {requiredDateRanges.length === 0 ? (
+                                <span className="text-[11px] text-muted-foreground">
+                                    No required PTO ranges added yet. Select a start and end date above to lock in mandatory PTO.
+                                </span>
+                            ) : (
+                                requiredDateRanges.map(r => (
+                                    <div
+                                        key={r.id}
+                                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-xs font-medium text-emerald-800 dark:text-emerald-200"
+                                    >
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                            <span>
+                                                {r.startDate} → {r.endDate}
+                                                {r.label ? ` (${r.label})` : ''}
+                                            </span>
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setRules(prev => ({
+                                                    ...prev,
+                                                    restrictions: {
+                                                        ...prev.restrictions,
+                                                        requiredDateRanges: (
+                                                            prev.restrictions.requiredDateRanges ?? []
+                                                        ).filter(x => x.id !== r.id)
+                                                    }
+                                                }))
+                                            }
+                                            className="text-red-500 hover:text-red-400"
+                                            title="Remove required range"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 2. Prohibited Date Ranges (No PTO) */}
+                    <div className="p-4 rounded-xl bg-white/75 dark:bg-black/30 border-2 border-red-500/30 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs md:text-sm font-bold text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                                <CalendarOff className="w-4 h-4 shrink-0" />
+                                2. Prohibited Date Ranges (No PTO)
+                            </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <span className="block text-[11px] font-medium text-muted-foreground mb-1">
+                                    Start Date
+                                </span>
+                                <input
+                                    type="date"
+                                    min={startDate}
+                                    max={endDate}
+                                    value={newRangeStart}
+                                    onChange={e => setNewRangeStart(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-black/40 border border-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-500 text-xs"
+                                />
+                            </div>
+                            <div>
+                                <span className="block text-[11px] font-medium text-muted-foreground mb-1">
+                                    End Date
+                                </span>
+                                <input
+                                    type="date"
+                                    min={newRangeStart || startDate}
+                                    max={endDate}
+                                    value={newRangeEnd}
+                                    onChange={e => setNewRangeEnd(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-black/40 border border-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-500 text-xs"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                placeholder="Optional label (e.g. Q3 Freeze)"
+                                value={newRangeLabel}
+                                onChange={e => setNewRangeLabel(e.target.value)}
+                                className="flex-1 px-2.5 py-1.5 rounded-lg bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
+                            />
+                            <button
+                                type="button"
+                                onClick={handleAddProhibitedRange}
+                                className="px-3.5 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-500 inline-flex items-center gap-1 shadow-sm"
+                            >
+                                <Plus className="w-3.5 h-3.5" /> Add Prohibited
+                            </button>
+                        </div>
+                        <div className="space-y-1.5 pt-1">
+                            {rules.restrictions.prohibitedDateRanges.length === 0 ? (
+                                <span className="text-[11px] text-muted-foreground">
+                                    No prohibited ranges added yet. Select a start and end date above to block PTO allocation.
+                                </span>
+                            ) : (
+                                rules.restrictions.prohibitedDateRanges.map(r => (
+                                    <div
+                                        key={r.id}
+                                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-xs font-medium text-red-800 dark:text-red-200"
+                                    >
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <CalendarOff className="w-3.5 h-3.5 shrink-0" />
+                                            <span>
+                                                {r.startDate} → {r.endDate}
+                                                {r.label ? ` (${r.label})` : ''}
+                                            </span>
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                setRules(prev => ({
+                                                    ...prev,
+                                                    restrictions: {
+                                                        ...prev.restrictions,
+                                                        prohibitedDateRanges:
+                                                            prev.restrictions.prohibitedDateRanges.filter(
+                                                                x => x.id !== r.id
+                                                            )
+                                                    }
+                                                }))
+                                            }
+                                            className="text-red-500 hover:text-red-400"
+                                            title="Remove prohibited range"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="rounded-2xl bg-white/60 dark:bg-white/5 border border-indigo-500/20 overflow-hidden transition-all">
+                <button
+                    type="button"
+                    onClick={() => setIsOpen(o => !o)}
+                    className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-indigo-500/5 transition-colors"
+                >
                 <div className="flex items-center gap-3">
                     <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
                         <Sliders className="w-4 h-4" />
@@ -715,196 +948,6 @@ export function OptimizationRulesPanel() {
                         </label>
                     </div>
 
-                    {/* D. Date Restrictions */}
-                    <div className="space-y-4">
-                        <div>
-                            <h4 className="font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider text-xs">
-                                D. Date Restrictions (Eligible Working Days Only)
-                            </h4>
-                            <p className="text-xs text-muted-foreground">
-                                Weekends and Singapore public holidays never consume PTO. Required and prohibited dates are validated for conflicts.
-                            </p>
-                        </div>
-
-                        {(restrictionWarning || conflicts.length > 0) && (
-                            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-start gap-2">
-                                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                                <div>
-                                    {restrictionWarning && <p>{restrictionWarning}</p>}
-                                    {conflicts.length > 0 && (
-                                        <p className="font-semibold">
-                                            Conflict detected on date(s): {conflicts.join(', ')} (marked as both Required and Prohibited).
-                                        </p>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            {/* 1. Required PTO Date Ranges (Mandatory) */}
-                            <div className="p-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/10 space-y-2">
-                                <label className="block text-xs font-semibold">
-                                    1. Required PTO Date Ranges (Mandatory)
-                                </label>
-                                <div className="grid grid-cols-2 gap-1.5">
-                                    <input
-                                        type="date"
-                                        min={startDate}
-                                        max={endDate}
-                                        value={newReqRangeStart}
-                                        onChange={e => setNewReqRangeStart(e.target.value)}
-                                        className="px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                    <input
-                                        type="date"
-                                        min={newReqRangeStart || startDate}
-                                        max={endDate}
-                                        value={newReqRangeEnd}
-                                        onChange={e => setNewReqRangeEnd(e.target.value)}
-                                        className="px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                </div>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        placeholder="Optional label (e.g. Family Trip)"
-                                        value={newReqRangeLabel}
-                                        onChange={e => setNewReqRangeLabel(e.target.value)}
-                                        className="flex-1 px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={handleAddRequiredRange}
-                                        className="px-2.5 py-1 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 inline-flex items-center gap-1"
-                                    >
-                                        <Plus className="w-3.5 h-3.5" /> Add
-                                    </button>
-                                </div>
-                                <div className="space-y-1 pt-1">
-                                    {requiredDateRanges.length === 0 ? (
-                                        <span className="text-[11px] text-muted-foreground">
-                                            No required PTO ranges added.
-                                        </span>
-                                    ) : (
-                                        requiredDateRanges.map(r => (
-                                            <div
-                                                key={r.id}
-                                                className="flex items-center justify-between px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300"
-                                            >
-                                                <span className="inline-flex items-center gap-1.5">
-                                                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                                                    <span>
-                                                        {r.startDate} → {r.endDate}
-                                                        {r.label ? ` (${r.label})` : ''}
-                                                    </span>
-                                                </span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        setRules(prev => ({
-                                                            ...prev,
-                                                            restrictions: {
-                                                                ...prev.restrictions,
-                                                                requiredDateRanges: (
-                                                                    prev.restrictions
-                                                                        .requiredDateRanges ?? []
-                                                                ).filter(x => x.id !== r.id)
-                                                            }
-                                                        }))
-                                                    }
-                                                    className="text-red-500 hover:text-red-400"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* 2. Prohibited Date Ranges (No PTO) */}
-                            <div className="p-3 rounded-xl bg-white/50 dark:bg-black/20 border border-white/10 space-y-2">
-                                <label className="block text-xs font-semibold">
-                                    2. Prohibited Date Ranges (No PTO)
-                                </label>
-                                <div className="grid grid-cols-2 gap-1.5">
-                                    <input
-                                        type="date"
-                                        min={startDate}
-                                        max={endDate}
-                                        value={newRangeStart}
-                                        onChange={e => setNewRangeStart(e.target.value)}
-                                        className="px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                    <input
-                                        type="date"
-                                        min={newRangeStart || startDate}
-                                        max={endDate}
-                                        value={newRangeEnd}
-                                        onChange={e => setNewRangeEnd(e.target.value)}
-                                        className="px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                </div>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        placeholder="Optional label (e.g. Q3 Freeze)"
-                                        value={newRangeLabel}
-                                        onChange={e => setNewRangeLabel(e.target.value)}
-                                        className="flex-1 px-2 py-1 rounded bg-white dark:bg-black/40 border border-neutral-300 dark:border-white/20 text-xs"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={handleAddProhibitedRange}
-                                        className="px-2.5 py-1 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 inline-flex items-center gap-1"
-                                    >
-                                        <Plus className="w-3.5 h-3.5" /> Add
-                                    </button>
-                                </div>
-                                <div className="space-y-1 pt-1">
-                                    {rules.restrictions.prohibitedDateRanges.length === 0 ? (
-                                        <span className="text-[11px] text-muted-foreground">
-                                            No prohibited ranges added.
-                                        </span>
-                                    ) : (
-                                        rules.restrictions.prohibitedDateRanges.map(r => (
-                                            <div
-                                                key={r.id}
-                                                className="flex items-center justify-between px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-xs text-red-700 dark:text-red-300"
-                                            >
-                                                <span className="inline-flex items-center gap-1.5">
-                                                    <CalendarOff className="w-3.5 h-3.5 shrink-0" />
-                                                    <span>
-                                                        {r.startDate} → {r.endDate}
-                                                        {r.label ? ` (${r.label})` : ''}
-                                                    </span>
-                                                </span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        setRules(prev => ({
-                                                            ...prev,
-                                                            restrictions: {
-                                                                ...prev.restrictions,
-                                                                prohibitedDateRanges:
-                                                                    prev.restrictions.prohibitedDateRanges.filter(
-                                                                        x => x.id !== r.id
-                                                                    )
-                                                            }
-                                                        }))
-                                                    }
-                                                    className="text-red-500 hover:text-red-400"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     {/* E. Optimization Objectives */}
                     <div className="space-y-4">
                         <h4 className="font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider text-xs">
@@ -1017,6 +1060,7 @@ export function OptimizationRulesPanel() {
                     </div>
                 </div>
             )}
+            </div>
         </div>
     );
 }

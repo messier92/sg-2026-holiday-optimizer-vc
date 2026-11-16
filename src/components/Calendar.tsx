@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import {
@@ -62,14 +62,7 @@ export interface SingaporeCalendarGridProps {
     startDate: string;
     endDate: string;
     ptoDates: string[];
-    manualPTODates?: Set<string>;
     continuousBreakDates?: Set<string>;
-    onDateClick?: (
-        dateStr: string,
-        isOutOfRange: boolean,
-        isWeekend: boolean,
-        isHoliday: boolean
-    ) => void;
     compact?: boolean;
 }
 
@@ -82,9 +75,7 @@ export function SingaporeCalendarGrid({
     startDate,
     endDate,
     ptoDates,
-    manualPTODates = new Set(),
     continuousBreakDates = new Set(),
-    onDateClick,
     compact = false
 }: SingaporeCalendarGridProps) {
     const ptoSet = useMemo(() => new Set(ptoDates), [ptoDates]);
@@ -99,10 +90,6 @@ export function SingaporeCalendarGrid({
                 <span>
                     <span className="inline-block mr-1.5 w-3 h-3 rounded-full bg-indigo-500/20 align-middle"></span>
                     Weekend
-                </span>
-                <span>
-                    <span className="inline-block mr-1.5 w-3 h-3 rounded-full bg-purple-400/60 align-middle"></span>
-                    Manual PTO
                 </span>
                 <span>
                     <span className="inline-block mr-1.5 w-3 h-3 rounded-full bg-green-500/80 align-middle"></span>
@@ -163,7 +150,6 @@ export function SingaporeCalendarGrid({
                                         h => h.date === dateStr
                                     );
                                     const isPTO = ptoSet.has(dateStr);
-                                    const isManualPTO = manualPTODates.has(dateStr);
                                     const isInContinuousBreak = continuousBreakDates.has(dateStr);
                                     const date = new Date(year, monthIndex, day);
                                     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
@@ -172,22 +158,11 @@ export function SingaporeCalendarGrid({
                                     const isAfterEnd = dateStr > endDate;
                                     const isOutOfRange = isPast || isAfterEnd;
 
-                                    const canClick =
-                                        !!onDateClick && !isOutOfRange && !isWeekend && !holiday;
-
                                     return (
                                         <div
                                             key={`${day}-${index}`}
-                                            onClick={() =>
-                                                onDateClick?.(
-                                                    dateStr,
-                                                    isOutOfRange,
-                                                    isWeekend,
-                                                    !!holiday
-                                                )
-                                            }
                                             className={cn(
-                                                'aspect-square flex items-center justify-center rounded-lg transition-colors relative group',
+                                                'aspect-square flex items-center justify-center rounded-lg transition-colors relative group cursor-default',
                                                 isOutOfRange &&
                                                     'opacity-25 line-through cursor-not-allowed',
                                                 !isOutOfRange &&
@@ -195,44 +170,31 @@ export function SingaporeCalendarGrid({
                                                     'ring-2 ring-amber-400/75 ring-offset-1 ring-offset-transparent',
                                                 !isOutOfRange &&
                                                     isWeekend &&
-                                                    'bg-indigo-500/5 text-indigo-700 dark:text-indigo-300 cursor-default',
+                                                    'bg-indigo-500/5 text-indigo-700 dark:text-indigo-300',
                                                 !isOutOfRange && holiday
-                                                    ? 'bg-red-500 text-white font-bold shadow-md shadow-red-500/20 cursor-default'
-                                                    : !isOutOfRange && isManualPTO
-                                                      ? 'bg-purple-400/60 text-white font-bold shadow-md shadow-purple-500/20 cursor-pointer'
-                                                      : !isOutOfRange && isPTO
-                                                        ? 'bg-green-500 text-white font-bold shadow-md shadow-green-500/20 cursor-default'
-                                                        : canClick
-                                                          ? 'hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer'
-                                                          : 'cursor-default'
+                                                    ? 'bg-red-500 text-white font-bold shadow-md shadow-red-500/20'
+                                                    : !isOutOfRange && isPTO
+                                                      ? 'bg-green-500 text-white font-bold shadow-md shadow-green-500/20'
+                                                      : undefined
                                             )}
                                             title={
                                                 holiday?.name ??
-                                                (isManualPTO
-                                                    ? 'Manual PTO (click to remove)'
-                                                    : isPTO
-                                                      ? 'Allocated / Suggested PTO'
-                                                      : isInContinuousBreak
-                                                        ? 'Part of Continuous Break'
-                                                        : canClick
-                                                          ? 'Click to select PTO'
-                                                          : undefined)
+                                                (isPTO
+                                                    ? 'Allocated / Suggested PTO'
+                                                    : isInContinuousBreak
+                                                      ? 'Part of Continuous Break'
+                                                      : undefined)
                                             }
                                         >
                                             {day}
-                                            {(holiday ||
-                                                isPTO ||
-                                                isManualPTO ||
-                                                isInContinuousBreak) &&
+                                            {(holiday || isPTO || isInContinuousBreak) &&
                                                 !isOutOfRange && (
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-gray-900 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
                                                         {holiday
                                                             ? holiday.name
-                                                            : isManualPTO
-                                                              ? 'Manual PTO'
-                                                              : isPTO
-                                                                ? 'Allocated PTO'
-                                                                : 'Continuous Break'}
+                                                            : isPTO
+                                                              ? 'Allocated PTO'
+                                                              : 'Continuous Break'}
                                                     </div>
                                                 )}
                                         </div>
@@ -258,9 +220,6 @@ export function Calendar() {
         setDuration,
         includeWeekends,
         setIncludeWeekends,
-        manualPTODates,
-        toggleManualPTODate,
-        clearManualPTODates,
         selectedAlgorithms,
         toggleAlgorithm,
         selectedAlgorithmIds,
@@ -279,15 +238,7 @@ export function Calendar() {
         navigate
     } = useOptimization();
 
-    const remainingPTO = Math.max(0, duration - manualPTODates.size);
-
-    // Existing legacy PTO suggestions (respecting blackout dates and prohibited date ranges)
-    const legacyPTODates = useMemo(() => {
-        const manualHolidays = Array.from(manualPTODates).map(date => ({
-            date,
-            name: 'Manual PTO'
-        }));
-        const allHolidays = [...PUBLIC_HOLIDAYS_2027, ...manualHolidays];
+    const { legacyPTODates, requiredWorkingDaysCount } = useMemo(() => {
         const calDays = buildCalendarDays(
             startDate,
             endDate,
@@ -295,13 +246,33 @@ export function Calendar() {
             rules.restrictions
         );
         const excludedDates = new Set<string>();
+        const requiredDates = new Set<string>();
         for (const d of calDays) {
             if (d.isBlackout) {
                 excludedDates.add(d.date);
             }
+            if (d.isRequiredPTO) {
+                requiredDates.add(d.date);
+            }
         }
-        return getMaximizePTO(startDate, remainingPTO, allHolidays, endDate, excludedDates);
-    }, [startDate, endDate, remainingPTO, manualPTODates, rules.restrictions]);
+        const availableBudget = Math.max(0, duration - rules.allocation.reservePTODays);
+        return {
+            legacyPTODates: getMaximizePTO(
+                startDate,
+                availableBudget,
+                PUBLIC_HOLIDAYS_2027,
+                endDate,
+                excludedDates,
+                requiredDates
+            ),
+            requiredWorkingDaysCount: requiredDates.size
+        };
+    }, [startDate, endDate, duration, rules.restrictions, rules.allocation.reservePTODays]);
+
+    const remainingPTO = Math.max(
+        0,
+        duration - rules.allocation.reservePTODays - requiredWorkingDaysCount
+    );
 
     // Determine which PTO dates and continuous break dates to render on the main calendar
     const activeAlgoResult =
@@ -323,28 +294,13 @@ export function Calendar() {
             PUBLIC_HOLIDAYS_2027,
             rules.restrictions
         );
-        const combinedPTO = [...legacyPTODates, ...Array.from(manualPTODates)];
         const { continuousBreakDates: legacyBreakDates } = analyzeBreaks(
             calDays,
-            combinedPTO,
+            legacyPTODates,
             rules.breakDuration
         );
         return new Set(legacyBreakDates);
-    }, [activeAlgoResult, startDate, endDate, legacyPTODates, manualPTODates, rules]);
-
-    useEffect(() => {
-        // Keep manualPTODates valid when duration shrinks
-    }, [duration]);
-
-    const handleDateClick = (
-        dateStr: string,
-        isOutOfRange: boolean,
-        isWeekend: boolean,
-        isHoliday: boolean
-    ) => {
-        if (isOutOfRange || isWeekend || isHoliday) return;
-        toggleManualPTODate(dateStr);
-    };
+    }, [activeAlgoResult, startDate, endDate, legacyPTODates, rules]);
 
     const freshResultIds = ALL_ALGORITHMS.filter(
         id => results[id] && !isResultStale(id)
@@ -408,11 +364,7 @@ export function Calendar() {
                     startDate={startDate}
                     endDate={endDate}
                     ptoDates={displayedPTODates}
-                    manualPTODates={
-                        activeCalendarSource === 'legacy' ? manualPTODates : new Set()
-                    }
                     continuousBreakDates={continuousBreakDates}
-                    onDateClick={handleDateClick}
                 />
 
                 {/* Main Enhanced PTO Widget */}
@@ -644,9 +596,11 @@ export function Calendar() {
                                     </span>
                                 </div>
                                 <div className="flex items-center justify-between mb-2 text-sm">
-                                    <span className="text-muted-foreground">Manual PTO:</span>
-                                    <span className="font-semibold text-purple-600 dark:text-purple-400">
-                                        {manualPTODates.size} days
+                                    <span className="text-muted-foreground">
+                                        Required PTO (from ranges):
+                                    </span>
+                                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                        {requiredWorkingDaysCount} days
                                     </span>
                                 </div>
                                 <div className="flex items-center justify-between mb-2 text-sm">
@@ -657,14 +611,6 @@ export function Calendar() {
                                         {remainingPTO} days
                                     </span>
                                 </div>
-                                {manualPTODates.size > 0 && (
-                                    <button
-                                        onClick={clearManualPTODates}
-                                        className="w-full mt-2 mb-2 px-4 py-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-700 dark:text-purple-300 font-semibold text-sm transition-all duration-200 hover:shadow-md hover:shadow-purple-500/10"
-                                    >
-                                        Clear All Manual PTOs
-                                    </button>
-                                )}
                                 <input
                                     id="duration-slider"
                                     type="range"
@@ -699,10 +645,7 @@ export function Calendar() {
                                     if (!includeWeekends && d.isWeekend) {
                                         continue;
                                     }
-                                    const isManual =
-                                        activeCalendarSource === 'legacy' &&
-                                        manualPTODates.has(d.date);
-                                    if (d.isWeekend || d.isPublicHoliday || ptoSet.has(d.date) || isManual) {
+                                    if (d.isWeekend || d.isPublicHoliday || ptoSet.has(d.date)) {
                                         nonWorking++;
                                     } else {
                                         working++;
